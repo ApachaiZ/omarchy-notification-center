@@ -43,8 +43,8 @@ Do Not Disturb, and a settings view for layout, spacing, and shortcuts.
   hide the unread badge.
 - **Keyboard control** — arrows or `h`/`j`/`k`/`l`, `Enter`, `Del`/`x`, `/`
   search, `d` Do Not Disturb, `Shift+C` clear, `g`/`G`, `?`, `Esc`, and
-  `s`/`Shift+P` settings. The search, DND, details, and help keys are
-  configurable in Settings.
+  the Settings key (default `s`). The search, DND, details, settings, and
+  help keys are configurable in Settings.
 - **Keyboard-driven settings** — arrows or `hjkl` move between settings,
   left/right adjust the focused value, `Enter` applies.
 - **Placement settings** — choose the window position (top/bottom ×
@@ -79,7 +79,8 @@ Do Not Disturb, and a settings view for layout, spacing, and shortcuts.
 
 ## Settings
 
-The gear button in the panel header, `s`, or `Shift+P` opens the settings view:
+The gear button in the panel header or the configured Settings key (`s` by
+default; `Shift+P` is selectable) opens the settings view:
 
 - **Layout** — `Window` (floating card), `Horizontal` band, or `Vertical`
   band.
@@ -96,7 +97,7 @@ The gear button in the panel header, `s`, or `Shift+P` opens the settings view:
   archive image copies), and show/hide the unread badge.
 - **Shortcuts** — choose what `Enter` opens (app or details), show/hide the
   hint bar, and pick the Search (`/` or `Ctrl+F`), DND (`d`/`D`), Details
-  (`i`/`I`), and Help (`?`/`F1`) keys.
+  (`i`/`I`), Settings (`s`/`Shift+P`), and Help (`?`/`F1`) keys.
 - **Position** — `Top`/`Bottom` and `Left`/`Center`/`Right` anchor, plus a
   `Center Screen` button that centers the panel in the middle of the display.
   A vertical band always hangs from the top: its Bottom row and the
@@ -126,7 +127,7 @@ alongside the last-seen timestamp.
 | `d` | Toggle Do Not Disturb |
 | `Shift+C` | Clear all (press twice unless confirmation is off) |
 | `?` | Show shortcut help |
-| `s` / `Shift+P` | Open settings |
+| `s` or `Shift+P` (configured) | Open settings |
 | `Esc` | Leave search, detail, or settings, then close |
 | `↑` / `↓` / `j` / `k` (settings) | Move between settings rows |
 | `←` / `→` / `h` / `l` (settings) | Adjust the selected value |

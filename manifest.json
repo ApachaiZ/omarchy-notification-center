@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "apach.notifications",
   "name": "Notification Center",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "author": "apach",
   "license": "GPL-3.0",
   "description": "Keyboard-first notification center: floating window or horizontal/vertical band, 30-day history, search, dismiss, Do Not Disturb, and open-the-sender cards.",

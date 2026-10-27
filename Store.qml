@@ -55,6 +55,7 @@ Item {
   property string dndKey: "d"
   property string detailKey: "i"
   property string helpKey: "?"
+  property string settingsKey: "s"
 
   // Where the bar entry currently lives (read from shell.json), so the
   // settings view can show the active section and offer a fine index move.
@@ -280,6 +281,7 @@ Item {
     store.dndKey = parsed.dndKey
     store.detailKey = parsed.detailKey
     store.helpKey = parsed.helpKey
+    store.settingsKey = parsed.settingsKey === "P" ? "P" : "s"
     store.recomputeUnseen()
   }
 
@@ -349,7 +351,8 @@ Item {
       searchKey: store.searchKey,
       dndKey: store.dndKey,
       detailKey: store.detailKey,
-      helpKey: store.helpKey
+      helpKey: store.helpKey,
+      settingsKey: store.settingsKey
     }) + "\n")
   }
 
@@ -455,6 +458,13 @@ Item {
     var next = String(value || "") === "F1" ? "F1" : "?"
     if (store.helpKey === next) return
     store.helpKey = next
+    store.scheduleCenterStateSave()
+  }
+
+  function setSettingsKey(value) {
+    var next = String(value || "") === "P" ? "P" : "s"
+    if (store.settingsKey === next) return
+    store.settingsKey = next
     store.scheduleCenterStateSave()
   }
 

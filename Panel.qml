@@ -44,6 +44,7 @@ Panel {
   property bool clearArmed: false
   property bool helpOpen: false
   property int settingsCursor: 0
+  readonly property int settingsRowCount: 20
 
   readonly property bool horizontal: root.store ? root.store.mode === "horizontal" : false
   readonly property bool footerVisible: root.store ? root.store.shortcutBar : true
@@ -52,6 +53,7 @@ Panel {
     if (value === "ctrl+f") return "Ctrl+F"
     if (value === "D") return "Shift+D"
     if (value === "I") return "Shift+I"
+    if (value === "P") return "Shift+P"
     return String(value || "")
   }
 
@@ -64,6 +66,7 @@ Panel {
     return "↑↓ / jk select · " + enter + " · " + keyLabel(root.store ? root.store.detailKey : "i") + " details · "
       + (root.store ? keyLabel(root.store.searchKey) : "/") + " search · "
       + keyLabel(root.store ? root.store.dndKey : "d") + " DND · "
+      + keyLabel(root.store ? root.store.settingsKey : "s") + " settings · "
       + keyLabel(root.store ? root.store.helpKey : "?") + " help"
   }
   // Horizontal cards grow to share the band when there are few, and stop at
@@ -301,7 +304,7 @@ Panel {
 
   function moveSettingsCursor(dy) {
     if (dy === 0) return
-    root.settingsCursor = (root.settingsCursor + dy + 19) % 19
+    root.settingsCursor = (root.settingsCursor + dy + root.settingsRowCount) % root.settingsRowCount
   }
 
   function cyclePlacement(delta) {
@@ -348,6 +351,7 @@ Panel {
     case 16: root.store.setDndKey(root.store.dndKey === "D" ? "d" : "D"); break
     case 17: root.store.setDetailKey(root.store.detailKey === "I" ? "i" : "I"); break
     case 18: root.store.setHelpKey(root.store.helpKey === "F1" ? "?" : "F1"); break
+    case 19: root.store.setSettingsKey(root.store.settingsKey === "P" ? "s" : "P"); break
     }
   }
 
@@ -1970,6 +1974,47 @@ Panel {
           }
         }
       }
+
+      CursorRow {
+        active: root.settingsCursor === 19
+
+        Row {
+          anchors.centerIn: parent
+          spacing: Style.space(6)
+
+          Text {
+            text: "Settings"
+            width: Style.space(100)
+            color: root.fg
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          Button {
+            text: "s"
+            Layout.preferredWidth: Style.space(64)
+            focusable: true
+            selected: root.store !== null && root.store.settingsKey === "s"
+            bordered: true
+            fontSize: Style.font.bodySmall
+            fontFamily: root.fontFamily
+            foreground: root.fg
+            onClicked: if (root.store) root.store.setSettingsKey("s")
+          }
+
+          Button {
+            text: "Shift+P"
+            Layout.preferredWidth: Style.space(78)
+            focusable: true
+            selected: root.store !== null && root.store.settingsKey === "P"
+            bordered: true
+            fontSize: Style.font.bodySmall
+            fontFamily: root.fontFamily
+            foreground: root.fg
+            onClicked: if (root.store) root.store.setSettingsKey("P")
+          }
+        }
+      }
     }
   }
 
@@ -1995,7 +2040,7 @@ Panel {
       else if (root.selectedEntry !== null) content = Math.max(content, Style.space(760))
       return content
     }
-    desiredHeight: root.activeContentHeight + (root.footerVisible ? Style.space(30) : 0)
+    desiredHeight: root.activeContentHeight + (root.footerVisible ? shortcutFooter.height : 0)
       + (root.settingsOpen ? Style.space(16) : 0)
     focusTarget: keyCatcher
 
@@ -2041,7 +2086,7 @@ Panel {
           else if (t === root.store.detailKey) root.openDetailAtCursor()
           else if (t === root.store.helpKey) root.toggleHelp()
           else if (t === root.store.searchKey) root.openSearch()
-          else if (t === "s" || t === "P") root.openSettings()
+          else if (t === root.store.settingsKey) root.openSettings()
           else if (t === "g") { root.cursorIndex = root.visibleEntries.length > 0 ? 0 : -1; root.scrollCursorIntoView() }
           else if (t === "G") { root.cursorIndex = root.visibleEntries.length - 1; root.scrollCursorIntoView() }
           else if (t === "C") root.handleClearShortcut()
@@ -2100,7 +2145,7 @@ Panel {
                 PanelActionButton {
                   visible: !root.settingsOpen && !root.helpOpen
                   iconText: "󰒓"
-                  tooltipText: "Settings"
+                  tooltipText: "Settings (" + root.keyLabel(root.store ? root.store.settingsKey : "s") + ")"
                   foreground: root.fg
                   hoverColor: Commons.Color.accent
                   fontFamily: root.fontFamily
@@ -2209,6 +2254,9 @@ Panel {
 
                 Text { text: root.keyLabel(root.store ? root.store.searchKey : "/"); color: Commons.Color.accent; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
                 Text { Layout.fillWidth: true; text: "Search app, title and body"; color: root.fg; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+
+                Text { text: root.keyLabel(root.store ? root.store.settingsKey : "s"); color: Commons.Color.accent; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+                Text { Layout.fillWidth: true; text: "Open settings"; color: root.fg; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
 
                 Text { text: root.keyLabel(root.store ? root.store.dndKey : "d"); color: Commons.Color.accent; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
                 Text { Layout.fillWidth: true; text: "Toggle Do Not Disturb"; color: root.fg; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
@@ -2680,7 +2728,7 @@ Panel {
           anchors.left: parent.left
           anchors.right: parent.right
           anchors.bottom: parent.bottom
-          height: visible ? Style.space(28) : 0
+          height: visible ? Math.max(Style.space(28), hintText.implicitHeight + Style.space(8)) : 0
 
           Rectangle {
             anchors.top: parent.top
@@ -2691,9 +2739,12 @@ Panel {
           }
 
           Text {
+            id: hintText
             anchors.fill: parent
             anchors.leftMargin: Style.space(12)
             anchors.rightMargin: Style.space(12)
+            anchors.topMargin: Style.space(4)
+            anchors.bottomMargin: Style.space(4)
             verticalAlignment: Text.AlignVCenter
             horizontalAlignment: Text.AlignHCenter
             textFormat: Text.PlainText
@@ -2701,7 +2752,7 @@ Panel {
             color: Qt.darker(root.fg, 1.6)
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
-            elide: Text.ElideRight
+            wrapMode: Text.WordWrap
           }
         }
 
