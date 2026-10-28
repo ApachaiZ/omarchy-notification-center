@@ -22,6 +22,8 @@ PanelWindow {
   property QtObject bar: null
   property QtObject owner: null
   property bool open: false
+  property bool isPrimary: false
+  property string screenName: ""
   property string mode: "window"
   property string placement: "top-right"
   property int marginX: 12
@@ -38,20 +40,23 @@ PanelWindow {
 
   readonly property var anchorWindow: anchorItem ? anchorItem.QsWindow.window : null
   readonly property var anchorScreen: anchorWindow ? anchorWindow.screen : null
-  // IPC is answered by one bar instance only, so the panel must not inherit
-  // that instance's screen: open where the user is actually looking.
-  readonly property var focusedScreen: {
-    var monitor = Hyprland.focusedMonitor
-    if (monitor && monitor.name) {
-      var screens = Quickshell.screens
-      for (var i = 0; i < screens.length; i++)
-        if (screens[i].name === monitor.name) return screens[i]
-    }
-    return anchorScreen
+  // The center is pinned to the monitor chosen in settings, never to the
+  // focused output. If that monitor is gone, fall back to the bar's screen
+  // and then to the first available output.
+  readonly property var targetScreen: {
+    var screens = Quickshell.screens
+    var wanted = String(root.screenName || "")
+    for (var i = 0; i < screens.length; i++)
+      if (String(screens[i].name) === wanted) return screens[i]
+    // Before settings load, use the bar's screen. Once a screen has been
+    // chosen but is disconnected, fall back to the same first output the
+    // toast uses so the two surfaces cannot split across monitors.
+    if (wanted === "" && anchorScreen) return anchorScreen
+    return screens.length > 0 ? screens[0] : null
   }
 
-  readonly property real screenW: focusedScreen ? focusedScreen.width : 0
-  readonly property real screenH: focusedScreen ? focusedScreen.height : 0
+  readonly property real screenW: targetScreen ? targetScreen.width : 0
+  readonly property real screenH: targetScreen ? targetScreen.height : 0
   readonly property string barPos: bar ? bar.position : "top"
   readonly property real barThickness: bar ? Math.max(0, bar.barSize) : 0
   readonly property real gap: Style.gapsOut
@@ -105,7 +110,7 @@ PanelWindow {
     return Math.round(Math.max(topInset, screenH - bottomInset - cardH))
   }
 
-  screen: focusedScreen
+  screen: targetScreen
   visible: open
   color: "transparent"
   exclusionMode: ExclusionMode.Ignore
@@ -117,15 +122,29 @@ PanelWindow {
     right: true
   }
 
+  readonly property bool hostFocused: {
+    var monitor = Hyprland.focusedMonitor
+    return !!monitor && String(monitor.name) === String(root.screenName)
+  }
+
   WlrLayershell.namespace: "omarchy-notification-center"
   WlrLayershell.layer: WlrLayer.Overlay
+  // One center can exist per selected output. The compositor hands keyboard
+  // focus to one of the exclusive surfaces; all of them mirror the same
+  // Panel state, so typing works whichever one it picks.
   WlrLayershell.keyboardFocus: open ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
   onOpenChanged: {
     if (!open) return
     Qt.callLater(function() {
-      if (root.open && root.focusTarget) root.focusTarget.forceActiveFocus()
+      if (root.open && root.focusTarget)
+        root.focusTarget.forceActiveFocus()
     })
+  }
+
+  onFocusTargetChanged: {
+    if (root.open && root.focusTarget)
+      root.focusTarget.forceActiveFocus()
   }
 
   // Click anywhere outside the card closes the center.

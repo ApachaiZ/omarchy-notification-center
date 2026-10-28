@@ -18,13 +18,13 @@ Item {
   // ---- state dirs (owned by the shell's notification service) ----
   readonly property string home: Quickshell.env("HOME")
   readonly property string stateDir: home + "/.local/state/omarchy/notifications"
-  readonly property string historyDir: stateDir + "/history"
-  readonly property string imagesDir: stateDir + "/images"
   readonly property string settingsPath: home + "/.local/state/omarchy/notifications.json"
   readonly property string centerStatePath: home + "/.local/state/omarchy/notifications-center.json"
-  readonly property string archiveDir: home + "/.local/state/omarchy/notifications-center"
-  readonly property string archivePath: archiveDir + "/archive.json"
-  readonly property string archiveImagesDir: archiveDir + "/images"
+
+  // Injected by BarWidget from the merged plugin's service. When present, the
+  // live rows come straight from the service model and DND is a direct call;
+  // the file readers below remain only as a fallback.
+  property var service: null
 
   property bool dnd: false
   property double lastSeen: 0
@@ -34,6 +34,13 @@ Item {
   // Center placement, persisted next to lastSeen. `placement` is
   // "<top|bottom>-<left|center|right>"; margins are screen-edge insets.
   property string placement: "top-right"
+  // Monitors where both the center and its toasts appear. Chosen explicitly
+  // in settings from the detected outputs, never derived from focus. At most
+  // four names are kept.
+  property var screenNames: []
+  property string primaryScreenName: ""
+  property bool screensDefaulted: false
+  property bool shellConfigLoaded: false
   // "window" floats a card, "horizontal"/"vertical" turn the center into a
   // band that spans the free screen area along that axis.
   property string mode: "window"
@@ -64,18 +71,9 @@ Item {
   property var barSizes: ({})
 
   property var liveEntries: []
-  property var historyEntries: []
-  property var serviceEntries: []
+  property var archiveEntries: []
   property var entries: []
   property string mergeSignature: ""
-
-  // Private 30-day archive. The shell service keeps a short rolling history,
-  // so older notifications are mirrored here; the same list feeds the UI.
-  readonly property int retentionDays: 30
-  readonly property int maxArchivedEntries: 1000
-  property var archiveEntries: []
-  property bool archiveLoaded: false
-  property string archiveSignature: ""
 
   // ---- action queue (one serialized Process for all mutating actions) ----
   property var actionQueue: []
@@ -97,126 +95,92 @@ Item {
 
   // ---- data ----
 
+  Connections {
+    target: store.service
+    ignoreUnknownSignals: true
+    function onDoNotDisturbChanged() {
+      store.dnd = store.service.doNotDisturb === true
+    }
+    function onArchiveEntriesChanged() {
+      store.onArchiveChanged()
+    }
+  }
+
+  // Live toast rows change in place as clients update them through
+  // replaces_id, and rows leave when a toast is dismissed or expires.
+  Connections {
+    target: store.service ? store.service.popupModel : null
+    ignoreUnknownSignals: true
+    function onRowsInserted() { store.refreshLive() }
+    function onRowsRemoved() { store.refreshLive() }
+    function onDataChanged() { store.refreshLive() }
+    function onModelReset() { store.refreshLive() }
+  }
+
   function refresh() {
-    if (!liveReadProc.running) liveReadProc.running = true
-    if (!historyReadProc.running) historyReadProc.running = true
-    settingsFile.reload()
+    if (store.service) store.refreshLive()
+    else if (!liveReadProc.running) liveReadProc.running = true
+    if (!store.service) settingsFile.reload()
+  }
+
+  function onServiceChanged() {
+    if (!store.service) return
+    if (typeof store.service.setCenterOpen === "function")
+      store.service.setCenterOpen(store.hostOpen === true)
+    store.dnd = store.service.doNotDisturb === true
+    store.archiveEntries = store.service.archiveEntries || []
+    store.refreshLive()
+  }
+
+  function onArchiveChanged() {
+    if (!store.service) return
+    store.archiveEntries = store.service.archiveEntries || []
+    store.rebuildEntries()
+  }
+
+  // Snapshot the service's live ListModel. Roles are copied out because a
+  // model row is not stable across service updates.
+  function refreshLive() {
+    if (!store.service) return
+    var model = store.service.popupModel
+    if (!model) return
+    var out = []
+    for (var i = 0; i < model.count; i++) {
+      var row = model.get(i)
+      if (!row) continue
+      out.push({
+        id: Number(row.id || 0),
+        originalId: Number(row.originalId || 0),
+        app: String(row.app || ""),
+        appIcon: String(row.appIcon || ""),
+        summary: String(row.summary || ""),
+        body: String(row.body || ""),
+        image: String(row.image || ""),
+        glyph: String(row.glyph || ""),
+        execArgv: String(row.execArgv || ""),
+        urgency: typeof row.urgency === "number" ? row.urgency : 1,
+        timestamp: Number(row.timestamp || 0),
+        stem: String(row.timestamp || 0) + "-" + String(row.originalId || 0),
+        source: "live"
+      })
+    }
+    store.liveEntries = store.filterSuppressed(out)
+    store.rebuildEntries()
   }
 
   function onLiveRead(raw) {
+    if (store.service) return
     store.liveEntries = store.filterSuppressed(Model.parseEntries(raw, "live"))
-    store.refreshServiceEntries()
+    store.rebuildEntries()
   }
 
-  function onHistoryRead(raw) {
-    store.historyEntries = store.filterSuppressed(Model.parseEntries(raw, "history"))
-    store.refreshServiceEntries()
-  }
-
-  function refreshServiceEntries() {
-    store.serviceEntries = Model.mergeEntries(store.liveEntries, store.historyEntries)
-    store.ingestArchive()
-    store.applyMerge()
-  }
-
-  function applyMerge() {
-    var merged = Model.mergeEntries(store.serviceEntries, store.archiveEntries)
+  function rebuildEntries() {
+    var merged = Model.mergeEntries(store.liveEntries, store.archiveEntries)
     var sig = Model.signature(merged)
     if (sig === store.mergeSignature) return
     store.entries = merged
     store.mergeSignature = sig
     store.recomputeUnseen()
-  }
-
-  // ---- private 30-day archive ----
-
-  function localizeArchivePath(value) {
-    var v = String(value || "")
-    if (v.length === 0) return ""
-    var filePrefix = "file://" + store.imagesDir + "/"
-    var plainPrefix = store.imagesDir + "/"
-    if (v.indexOf(filePrefix) === 0)
-      return "file://" + store.archiveImagesDir + "/" + v.slice(filePrefix.length)
-    if (v.indexOf(plainPrefix) === 0)
-      return store.archiveImagesDir + "/" + v.slice(plainPrefix.length)
-    return v
-  }
-
-  function parseArchive(raw) {
-    var text = String(raw || "").trim()
-    if (!text) return []
-    try {
-      var parsed = JSON.parse(text)
-      var list = Array.isArray(parsed) ? parsed : (parsed && parsed.entries)
-      if (!Array.isArray(list)) return []
-      var out = []
-      for (var i = 0; i < list.length; i++) {
-        var e = list[i]
-        if (!e || !e.stem) continue
-        var timestamp = Number(e.timestamp) || 0
-        if (timestamp <= 0) continue
-        out.push({
-          id: Number(e.id || 0),
-          originalId: Number(e.originalId || 0),
-          app: String(e.app || ""),
-          appIcon: store.localizeArchivePath(e.appIcon),
-          summary: String(e.summary || ""),
-          body: String(e.body || ""),
-          image: store.localizeArchivePath(e.image),
-          glyph: String(e.glyph || ""),
-          execArgv: String(e.execArgv || ""),
-          urgency: typeof e.urgency === "number" ? e.urgency : 1,
-          timestamp: timestamp,
-          stem: String(e.stem),
-          source: String(e.source || "history")
-        })
-      }
-      return out
-    } catch (e) {
-      return []
-    }
-  }
-
-  function pruneArchive(list) {
-    var cutoff = Date.now() - store.retentionDays * 86400000
-    var out = []
-    for (var i = 0; i < list.length; i++)
-      if (Number(list[i].timestamp) >= cutoff) out.push(list[i])
-    if (out.length > store.maxArchivedEntries) out = out.slice(0, store.maxArchivedEntries)
-    return out
-  }
-
-  function loadArchive(raw) {
-    store.archiveLoaded = true
-    store.archiveEntries = store.parseArchive(raw)
-    store.archiveSignature = Model.signature(store.archiveEntries)
-    // Service entries may have arrived first; fold them in and refresh the list.
-    store.ingestArchive()
-    store.applyMerge()
-  }
-
-  function ingestArchive() {
-    if (!store.archiveLoaded) return
-    var merged = store.pruneArchive(Model.mergeEntries(store.serviceEntries, store.archiveEntries))
-    var sig = Model.signature(merged)
-    if (sig === store.archiveSignature) return
-    store.archiveEntries = merged
-    store.archiveSignature = sig
-    store.scheduleArchiveSave()
-  }
-
-  function scheduleArchiveSave() {
-    if (!store.archiveLoaded) return
-    archiveSaveTimer.restart()
-    if (store.showPreviews) imagesCopyTimer.restart()
-  }
-
-  function purgeArchiveImages() {
-    if (!purgeImagesProc.running) purgeImagesProc.running = true
-  }
-
-  function flushArchive() {
-    archiveFile.setText(JSON.stringify({ version: 1, entries: store.archiveEntries }) + "\n")
   }
 
   function recomputeUnseen() {
@@ -265,6 +229,19 @@ Item {
     }
     store.placement = parsed.placement
     store.mode = parsed.mode
+    var screens = parsed.screens
+    if (!Array.isArray(screens) || screens.length === 0) {
+      var defaultScreen = store.defaultScreenName()
+      screens = defaultScreen !== "" ? [defaultScreen] : []
+      store.screensDefaulted = true
+      // The bar's primaryScreen is the best default. Wait for shell.json so
+      // the first saved screen is not an arbitrary output-order guess.
+      if (store.shellConfigLoaded) store.scheduleCenterStateSave()
+    } else {
+      store.screensDefaulted = false
+    }
+    store.screenNames = store.cleanScreenNames(screens)
+    if (parsed.screensLegacy) Qt.callLater(function() { store.flushScreens() })
     if (store.mode === "vertical" && store.placement.indexOf("top-") !== 0)
       store.placement = "top-" + store.placement.split("-")[1]
     store.marginX = parsed.marginX
@@ -293,12 +270,20 @@ Item {
   // ---- bar placement (read-only view of shell.json) ----
 
   function parseShellConfig(raw) {
+    store.shellConfigLoaded = true
     var sections = ["left", "center", "right"]
     var sizes = ({})
     var found = ""
     var index = -1
     try {
       var config = JSON.parse(String(raw || "{}"))
+      store.primaryScreenName = String(config && config.bar && config.bar.primaryScreen || "")
+      if (store.screensDefaulted) {
+        var defaultScreen = store.defaultScreenName()
+        store.screenNames = defaultScreen !== "" ? [defaultScreen] : []
+        store.screensDefaulted = false
+        store.scheduleCenterStateSave()
+      }
       var layout = (config && config.bar && config.bar.layout) || ({})
       for (var s = 0; s < sections.length; s++) {
         var list = layout[sections[s]]
@@ -338,6 +323,7 @@ Item {
       lastSeen: store.lastSeen,
       placement: store.placement,
       mode: store.mode,
+      screens: store.screenNames,
       marginX: store.marginX,
       marginY: store.marginY,
       padding: store.padding,
@@ -354,6 +340,69 @@ Item {
       helpKey: store.helpKey,
       settingsKey: store.settingsKey
     }) + "\n")
+  }
+
+  function defaultScreenName() {
+    var screens = Quickshell.screens
+    var primary = String(store.primaryScreenName || "")
+    if (primary !== "") {
+      for (var i = 0; i < screens.length; i++)
+        if (String(screens[i].name) === primary) return primary
+    }
+    return screens && screens.length > 0 ? String(screens[0].name || "") : ""
+  }
+
+  function cleanScreenNames(value) {
+    var out = []
+    if (!Array.isArray(value)) return out
+    for (var i = 0; i < value.length && out.length < 4; i++) {
+      var name = String(value[i] || "")
+      if (name !== "" && out.indexOf(name) === -1) out.push(name)
+    }
+    return out
+  }
+
+  function setScreenNames(value) {
+    var next = store.cleanScreenNames(value)
+    if (next.length === 0) return
+    if (JSON.stringify(next) === JSON.stringify(store.screenNames)) return
+    store.screenNames = next
+    store.screensDefaulted = false
+    // Move the toast with the center immediately; the service watches this
+    // file. Patch only the screen list so a sibling bar instance's stale
+    // placement/margins cannot be written back at the same time.
+    if (store.centerStateLoaded) store.flushScreens()
+    else store.scheduleCenterStateSave()
+  }
+
+  function flushScreens() {
+    if (!store.centerStateLoaded) return
+    var payload = ({})
+    try {
+      var parsed = JSON.parse(String(centerStateFile.text() || "").trim())
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) payload = parsed
+    } catch (e) {
+      payload = ({})
+    }
+    payload.version = 1
+    payload.screens = store.screenNames
+    delete payload.screen
+    centerStateFile.setText(JSON.stringify(payload) + "\n")
+  }
+
+  function toggleScreen(name) {
+    var target = String(name || "")
+    if (target === "") return
+    var next = store.screenNames.slice()
+    var index = next.indexOf(target)
+    if (index !== -1) {
+      if (next.length <= 1) return
+      next.splice(index, 1)
+    } else {
+      if (next.length >= 4) return
+      next.push(target)
+    }
+    store.setScreenNames(next)
   }
 
   function setMode(value) {
@@ -422,8 +471,8 @@ Item {
     if (store.showPreviews === next) return
     store.showPreviews = next
     store.scheduleCenterStateSave()
-    if (next) imagesCopyTimer.restart()
-    else purgeArchiveImages()
+    if (!next && store.service && typeof store.service.purgeArchiveImages === "function")
+      store.service.purgeArchiveImages()
   }
 
   function setShowBadge(value) {
@@ -491,21 +540,19 @@ Item {
     actionProc.running = true
   }
 
-  // Remove one notification. A live popup is dismissed through the service
-  // (so it leaves the screen immediately); its persisted file is deleted in
-  // both possible locations since the service may archive it concurrently.
+  // Remove one notification. The service owns both the live popup and the
+  // archive, so one direct call forgets it from both without a subprocess.
   function deleteEntry(entry) {
     if (!entry || !entry.stem) return
     var stem = String(entry.stem)
     store.suppress(stem, 2500)
 
-    if (entry.source === "live") {
-      store.enqueueAction(["bash", "-c",
-        'omarchy-shell -q notifications dismiss "$2" || true; rm -f "$1/$3.json" "$4/$3.json" "$5/$3"-* "$6/$3"-*',
-        "--", store.stateDir, String(entry.summary || ""), stem, store.historyDir, store.imagesDir, store.archiveImagesDir])
+    if (store.service && typeof store.service.forgetEntry === "function") {
+      store.service.forgetEntry(stem)
     } else {
       store.enqueueAction(["bash", "-c",
-        'rm -f "$1/$2.json" "$3/$2"-* "$4/$2"-*', "--", store.historyDir, stem, store.imagesDir, store.archiveImagesDir])
+        'omarchy-shell -q notifications dismiss "$2" || true; rm -f "$1/$3.json"',
+        "--", store.stateDir, String(entry.summary || ""), stem])
     }
     store.removeLocal(stem)
   }
@@ -513,33 +560,34 @@ Item {
   function removeLocal(stem) {
     var keep = function(e) { return e.stem !== stem }
     store.liveEntries = store.liveEntries.filter(keep)
-    store.historyEntries = store.historyEntries.filter(keep)
-    store.serviceEntries = Model.mergeEntries(store.liveEntries, store.historyEntries)
     store.archiveEntries = store.archiveEntries.filter(keep)
-    store.archiveSignature = Model.signature(store.archiveEntries)
-    store.scheduleArchiveSave()
-    store.applyMerge()
+    store.rebuildEntries()
   }
 
-  // Dismiss every on-screen toast, then wipe the history and the private
-  // archive. The shell service keeps its own copy; both are cleared.
+  // Dismiss every on-screen toast, then wipe the unified archive.
   function clearAll() {
     for (var i = 0; i < store.entries.length; i++) store.suppress(store.entries[i].stem, 3500)
-    store.enqueueAction(["bash", "-c",
-      'omarchy-shell -q notifications dismissAll && omarchy-shell -q notifications clear', "--"])
+    if (store.service) {
+      store.service.clearPopups()
+      if (typeof store.service.clearArchive === "function") store.service.clearArchive()
+      else store.service.clearHistory()
+    } else {
+      store.enqueueAction(["bash", "-c",
+        'omarchy-shell -q notifications dismissAll && omarchy-shell -q notifications clear', "--"])
+    }
     store.liveEntries = []
-    store.historyEntries = []
-    store.serviceEntries = []
     store.archiveEntries = []
-    store.archiveSignature = ""
-    store.scheduleArchiveSave()
-    store.purgeArchiveImages()
     store.entries = []
     store.mergeSignature = ""
     store.recomputeUnseen()
   }
 
   function toggleDnd() {
+    if (store.service) {
+      store.service.setDoNotDisturb(!store.service.doNotDisturb)
+      store.dnd = store.service.doNotDisturb === true
+      return
+    }
     store.enqueueAction(["omarchy-shell", "-q", "notifications", "toggleDnd"])
     // The service debounces its settings write; sync again shortly after.
     dndSyncTimer.restart()
@@ -554,36 +602,9 @@ Item {
   }
 
   Process {
-    id: historyReadProc
-    command: ["bash", "-c", "awk 1 \"$1\"/*.json 2>/dev/null || true", "--", store.historyDir]
-    stdout: StdioCollector { waitForEnd: true; onStreamFinished: store.onHistoryRead(text) }
-  }
-
-  Process {
     id: actionProc
     stdout: StdioCollector { waitForEnd: true }
     onExited: store.runNextAction()
-  }
-
-  Process {
-    id: imagesCopyProc
-    command: ["bash", "-c",
-      'mkdir -p "$1"; [ "$3" = "1" ] && cp -n "$2"/* "$1"/ 2>/dev/null || true; find "$1" -type f -mtime +31 -delete 2>/dev/null || true',
-      "--", store.archiveImagesDir, store.imagesDir, store.showPreviews ? "1" : "0"]
-    stdout: StdioCollector { waitForEnd: true }
-  }
-
-  Process {
-    id: purgeImagesProc
-    command: ["bash", "-c", 'rm -rf "$1"/* 2>/dev/null || true', "--", store.archiveImagesDir]
-    stdout: StdioCollector { waitForEnd: true }
-  }
-
-  Timer {
-    id: imagesCopyTimer
-    interval: 1500
-    repeat: false
-    onTriggered: if (!imagesCopyProc.running) imagesCopyProc.running = true
   }
 
   // ---- files & timers ----
@@ -594,8 +615,8 @@ Item {
     watchChanges: false
     atomicWrites: false
     printErrors: false
-    onLoaded: store.dnd = Model.parseSettings(text()).dnd
-    onLoadFailed: store.dnd = false
+    onLoaded: store.dnd = store.service ? store.service.doNotDisturb === true : Model.parseSettings(text()).dnd
+    onLoadFailed: store.dnd = store.service ? store.service.doNotDisturb === true : false
   }
 
   FileView {
@@ -622,38 +643,13 @@ Item {
     onLoaded: store.parseShellConfig(text())
   }
 
-  FileView {
-    id: archiveFile
-    path: store.archivePath
-    watchChanges: true
-    atomicWrites: false
-    printErrors: false
-    onLoaded: store.loadArchive(text())
-    onLoadFailed: store.loadArchive("")
-    onFileChanged: reload()
-  }
-
-  Process {
-    id: ensureArchiveDir
-    command: ["mkdir", "-p", store.archiveDir]
-    Component.onCompleted: running = true
-    onExited: archiveFile.reload()
-  }
-
-  // Directory watches for live updates. They can go quiet after rapid
-  // changes (see Bar.qml), so the poll timers below are the backstop.
+  // Directory watch for the fallback path only. The merged service pushes
+  // live rows and archive changes through its properties, so the center has
+  // no file watchers or polling while the service is live.
   FileView {
     id: liveDirWatch
     path: store.stateDir
-    watchChanges: true
-    printErrors: false
-    onFileChanged: reloadTimer.restart()
-  }
-
-  FileView {
-    id: historyDirWatch
-    path: store.historyDir
-    watchChanges: true
+    watchChanges: store.service === null
     printErrors: false
     onFileChanged: reloadTimer.restart()
   }
@@ -671,7 +667,7 @@ Item {
     id: openPollTimer
     interval: 2000
     repeat: true
-    running: hostOpen
+    running: hostOpen && store.service === null
     onTriggered: store.refresh()
   }
 
@@ -680,7 +676,7 @@ Item {
     id: closedPollTimer
     interval: 60000
     repeat: true
-    running: !hostOpen
+    running: !hostOpen && store.service === null
     onTriggered: store.refresh()
   }
 
@@ -696,13 +692,6 @@ Item {
     interval: 200
     repeat: false
     onTriggered: store.flushCenterState()
-  }
-
-  Timer {
-    id: archiveSaveTimer
-    interval: 1000
-    repeat: false
-    onTriggered: store.flushArchive()
   }
 
   // Set by Panel.qml while it is loaded and open; defaults to closed.

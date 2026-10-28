@@ -24,6 +24,7 @@ Panel {
 
   property var anchorItem: null
   property var hostWidget: null
+  property string hostScreenName: ""
   readonly property var barIdentity: hostWidget || root
 
   // Data lives in Store.qml so this UI can stay unloaded while the center is
@@ -44,7 +45,32 @@ Panel {
   property bool clearArmed: false
   property bool helpOpen: false
   property int settingsCursor: 0
-  readonly property int settingsRowCount: 20
+  property int screenCursor: 0
+  readonly property int settingsRowCount: 21
+  readonly property var screenList: Quickshell.screens
+  readonly property var centerScreens: {
+    var screens = Quickshell.screens
+    var names = root.store ? root.store.screenNames : []
+    var out = []
+    for (var i = 0; i < screens.length && out.length < 4; i++)
+      if (names.indexOf(String(screens[i].name || "")) !== -1) out.push(screens[i])
+    if (out.length === 0 && screens.length > 0) out.push(screens[0])
+    return out
+  }
+  property Item activeContent: null
+
+  function activeSearchField() {
+    return root.activeContent ? root.activeContent.searchField : null
+  }
+
+  function activeScrollView() {
+    return root.activeContent ? root.activeContent.scrollView : null
+  }
+
+  function focusActiveContent() {
+    if (root.activeContent && root.activeContent.keyCatcher)
+      root.activeContent.keyCatcher.forceActiveFocus()
+  }
 
   readonly property bool horizontal: root.store ? root.store.mode === "horizontal" : false
   readonly property bool footerVisible: root.store ? root.store.shortcutBar : true
@@ -102,19 +128,6 @@ Panel {
     if (diff === 1) return "Yesterday"
     if (diff > 1 && diff < 7) return Qt.formatDate(date, "dddd")
     return Qt.formatDate(date, "d MMMM yyyy")
-  }
-
-  readonly property real activeContentHeight: {
-    var h = headerRow.height + headerSeparator.height
-    var count = 2
-    if (root.searchOpen) { h += searchField.height; count++ }
-    if (root.clearArmed) { h += clearBanner.height; count++ }
-    var view = root.helpOpen ? helpColumn
-      : (root.settingsOpen ? settingsColumn
-      : (root.selectedEntry !== null ? detailColumn : listSection))
-    if (view) h += view.implicitHeight
-    count++
-    return h + Style.space(10) * (count - 1)
   }
 
   readonly property var groupedEntries: {
@@ -179,6 +192,8 @@ Panel {
   onOpenedChanged: {
     if (!root.store) return
     root.store.hostOpen = root.opened
+    if (root.store.service && typeof root.store.service.setCenterOpen === "function")
+      root.store.service.setCenterOpen(root.opened)
     if (root.opened) root.store.refresh()
   }
 
@@ -300,6 +315,14 @@ Panel {
     root.clearArmed = false
     root.settingsOpen = true
     root.settingsCursor = 0
+    root.screenCursor = 0
+    var screens = root.screenList
+    for (var i = 0; i < screens.length; i++) {
+      if (String(screens[i].name) === root.hostScreenName) {
+        root.screenCursor = i
+        break
+      }
+    }
   }
 
   function moveSettingsCursor(dy) {
@@ -320,6 +343,27 @@ Panel {
     root.setPlacement(value.split("-")[0], value.split("-")[1])
   }
 
+  function clampScreenCursor() {
+    var count = root.screenList ? root.screenList.length : 0
+    root.screenCursor = count === 0 ? 0 : Math.max(0, Math.min(root.screenCursor, count - 1))
+  }
+
+  function cycleScreen(delta) {
+    var screens = root.screenList
+    if (!screens || screens.length === 0) return
+    root.clampScreenCursor()
+    root.screenCursor = (root.screenCursor + (delta > 0 ? 1 : -1) + screens.length) % screens.length
+  }
+
+  function toggleScreenAtCursor() {
+    var screens = root.screenList
+    if (!root.store || !screens || screens.length === 0) return
+    root.clampScreenCursor()
+    var name = String(screens[root.screenCursor].name || "")
+    if (name === "") return
+    root.store.toggleScreen(name)
+  }
+
   function adjustSettings(delta) {
     if (!root.store || delta === 0) return
     var step = delta > 0 ? 1 : -1
@@ -334,30 +378,35 @@ Panel {
     case 3: root.store.setPadding(root.store.padding + step * 2); break
     case 4: root.store.setCardSpacing(root.store.cardSpacing + step * 2); break
     case 5: root.cyclePlacement(delta); break
-    case 7:
+    case 7: root.cycleScreen(step); break
+    case 8:
       var sections = ["left", "center", "right"]
       var si = sections.indexOf(root.store.barSection)
       if (si === -1) si = 0
       root.moveBarSection(sections[(si + step + sections.length) % sections.length])
       break
-    case 8: root.stepBarIndex(step); break
-    case 9: root.store.setConfirmClear(root.store.confirmClear ? false : true); break
-    case 10: root.store.setHideBodies(!root.store.hideBodies); break
-    case 11: root.store.setShowPreviews(!root.store.showPreviews); break
-    case 12: root.store.setShowBadge(!root.store.showBadge); break
-    case 13: root.store.setEnterOpens(root.store.enterOpens === "app" ? "detail" : "app"); break
-    case 14: root.store.setShortcutBar(!root.store.shortcutBar); break
-    case 15: root.store.setSearchKey(root.store.searchKey === "ctrl+f" ? "/" : "ctrl+f"); break
-    case 16: root.store.setDndKey(root.store.dndKey === "D" ? "d" : "D"); break
-    case 17: root.store.setDetailKey(root.store.detailKey === "I" ? "i" : "I"); break
-    case 18: root.store.setHelpKey(root.store.helpKey === "F1" ? "?" : "F1"); break
-    case 19: root.store.setSettingsKey(root.store.settingsKey === "P" ? "s" : "P"); break
+    case 9: root.stepBarIndex(step); break
+    case 10: root.store.setConfirmClear(root.store.confirmClear ? false : true); break
+    case 11: root.store.setHideBodies(!root.store.hideBodies); break
+    case 12: root.store.setShowPreviews(!root.store.showPreviews); break
+    case 13: root.store.setShowBadge(!root.store.showBadge); break
+    case 14: root.store.setEnterOpens(root.store.enterOpens === "app" ? "detail" : "app"); break
+    case 15: root.store.setShortcutBar(!root.store.shortcutBar); break
+    case 16: root.store.setSearchKey(root.store.searchKey === "ctrl+f" ? "/" : "ctrl+f"); break
+    case 17: root.store.setDndKey(root.store.dndKey === "D" ? "d" : "D"); break
+    case 18: root.store.setDetailKey(root.store.detailKey === "I" ? "i" : "I"); break
+    case 19: root.store.setHelpKey(root.store.helpKey === "F1" ? "?" : "F1"); break
+    case 20: root.store.setSettingsKey(root.store.settingsKey === "P" ? "s" : "P"); break
     }
   }
 
   function activateSettings() {
     if (root.settingsCursor === 6) {
       if (!root.store || root.store.mode !== "vertical") root.setPlacement("center", "center")
+      return
+    }
+    if (root.settingsCursor === 7) {
+      root.toggleScreenAtCursor()
       return
     }
     root.adjustSettings(1)
@@ -394,9 +443,10 @@ Panel {
     root.cursorIndex = -1
     root.query = ""
     Qt.callLater(function() {
-      if (!searchField) return
-      searchField.text = ""
-      searchField.forceActiveFocus()
+      var field = root.activeSearchField()
+      if (!field) return
+      field.text = ""
+      field.forceActiveFocus()
     })
   }
 
@@ -404,8 +454,9 @@ Panel {
     root.searchOpen = false
     root.query = ""
     root.cursorIndex = -1
-    if (searchField) searchField.text = ""
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    var field = root.activeSearchField()
+    if (field) field.text = ""
+    Qt.callLater(function() { root.focusActiveContent() })
   }
 
   function handleClearShortcut() {
@@ -441,8 +492,10 @@ Panel {
     }
     if (dy === 0) return
     if (root.selectedEntry !== null) {
-      var maxY = Math.max(0, scrollView.contentHeight - scrollView.height)
-      scrollView.contentY = Math.max(0, Math.min(scrollView.contentY + dy * Style.space(60), maxY))
+      var view = root.activeScrollView()
+      if (!view) return
+      var maxY = Math.max(0, view.contentHeight - view.height)
+      view.contentY = Math.max(0, Math.min(view.contentY + dy * Style.space(60), maxY))
       return
     }
     root.moveCursor(dy)
@@ -466,11 +519,12 @@ Panel {
     else root.deleteCursorEntry()
   }
 
-  onSettingsOpenChanged: if (scrollView) scrollView.contentY = 0
-  onSelectedEntryChanged: if (scrollView) scrollView.contentY = 0
+  onSettingsOpenChanged: { var v = root.activeScrollView(); if (v) v.contentY = 0 }
+  onSelectedEntryChanged: { var v = root.activeScrollView(); if (v) v.contentY = 0 }
   onQueryChanged: {
     root.cursorIndex = -1
-    if (scrollView) scrollView.contentY = 0
+    var v = root.activeScrollView()
+    if (v) v.contentY = 0
   }
 
   // ---- navigation / presentation ----
@@ -494,59 +548,7 @@ Panel {
     } else {
       root.cursorIndex = Math.max(0, Math.min(n - 1, root.cursorIndex + dy))
     }
-    root.scrollCursorIntoView()
-  }
-
-  // Keep the cursor's row visible without fighting normal scrolling: only
-  // nudge the Flickable when the row would otherwise sit outside the view.
-  function scrollCursorIntoView() {
-    if (root.cursorIndex < 0) return
-    if (root.horizontal) {
-      var card = null
-      for (var c = 0; c < bandRow.children.length; c++) {
-        var candidate = bandRow.children[c]
-        if (candidate && candidate.rowIndex !== undefined && candidate.rowIndex === root.cursorIndex) {
-          card = candidate
-          break
-        }
-      }
-      if (!card) return
-      var hmargin = Style.space(16)
-      var left = bandScroll.contentX + hmargin
-      var right = bandScroll.contentX + bandScroll.width - hmargin
-      if (card.x >= left && card.x + card.width <= right) return
-      var maxX = Math.max(0, bandScroll.contentWidth - bandScroll.width)
-      if (card.x < left) bandScroll.contentX = Math.max(0, card.x - hmargin)
-      else bandScroll.contentX = Math.min(maxX, card.x + card.width - bandScroll.width + hmargin)
-      return
-    }
-    if (!listRows) return
-    var row = null
-    var groupY = 0
-    for (var g = 0; g < listRows.children.length; g++) {
-      var group = listRows.children[g]
-      if (!group) continue
-      for (var i = 0; i < group.children.length; i++) {
-        var child = group.children[i]
-        if (child && child.rowIndex !== undefined && child.rowIndex === root.cursorIndex) {
-          row = child
-          groupY = group.y
-          break
-        }
-      }
-      if (row) break
-    }
-    if (!row) return
-
-    var margin = Style.space(24)
-    var rowY = listRows.y + groupY + row.y
-    var top = scrollView.contentY + margin
-    var bottom = scrollView.contentY + scrollView.height - margin
-    if (rowY >= top && rowY + row.height <= bottom) return
-
-    var maxY = Math.max(0, scrollView.contentHeight - scrollView.height)
-    if (rowY < top) scrollView.contentY = Math.max(0, rowY - margin)
-    else scrollView.contentY = Math.min(maxY, rowY + row.height - scrollView.height + margin)
+    if (root.activeContent) root.activeContent.scrollCursorIntoView()
   }
 
   function activateCursor() {
@@ -584,7 +586,7 @@ Panel {
     property int rowIndex: -1
     property bool cursorActive: false
 
-    width: contentColumn.width
+    width: parent ? parent.width : 0
     radius: root.cornerRadius
     // Active card (keyboard cursor) carries the theme's colored notification
     // border; inactive cards get the theme's normal control border. Both are
@@ -1325,6 +1327,57 @@ Panel {
                     onClicked: root.setPlacement("center", "center")
                   }
                 }
+
+                Item {
+                  width: parent.width
+                  height: screenFlow.implicitHeight
+
+                  Rectangle {
+                    anchors.fill: parent
+                    radius: Style.cornerRadius
+                    color: root.settingsCursor === 7 ? Style.hoverFillFor(root.fg, Commons.Color.accent) : "transparent"
+                    Behavior on color { ColorAnimation { duration: 100 } }
+                  }
+
+                  Flow {
+                    id: screenFlow
+                    width: parent.width
+                    spacing: Style.space(6)
+
+                    Text {
+                      text: "Screen"
+                      width: Style.space(52)
+                      height: Style.space(28)
+                      verticalAlignment: Text.AlignVCenter
+                      color: root.fg
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                    }
+
+                    Repeater {
+                      model: root.screenList
+
+                      delegate: Button {
+                        readonly property bool selectedScreen: root.store !== null
+                          && root.store.screenNames.indexOf(String(modelData.name || "")) !== -1
+                        text: (root.settingsCursor === 7 && root.screenCursor === index ? "› " : "")
+                          + (selectedScreen ? "✓ " : "")
+                          + String(modelData.name || "")
+                        focusable: true
+                        selected: selectedScreen
+                        bordered: true
+                        fontSize: Style.font.bodySmall
+                        fontFamily: root.fontFamily
+                        foreground: root.fg
+                        onClicked: {
+                          if (!root.store) return
+                          root.screenCursor = index
+                          root.store.toggleScreen(String(modelData.name || ""))
+                        }
+                      }
+                    }
+                  }
+                }
     }
   }
 
@@ -1356,7 +1409,7 @@ Panel {
                   Rectangle {
                     anchors.fill: parent
                     radius: Style.cornerRadius
-                    color: root.settingsCursor === 7 ? Style.hoverFillFor(root.fg, Commons.Color.accent) : "transparent"
+                    color: root.settingsCursor === 8 ? Style.hoverFillFor(root.fg, Commons.Color.accent) : "transparent"
                     Behavior on color { ColorAnimation { duration: 100 } }
                   }
 
@@ -1411,7 +1464,7 @@ Panel {
                   Rectangle {
                     anchors.fill: parent
                     radius: Style.cornerRadius
-                    color: root.settingsCursor === 8 ? Style.hoverFillFor(root.fg, Commons.Color.accent) : "transparent"
+                    color: root.settingsCursor === 9 ? Style.hoverFillFor(root.fg, Commons.Color.accent) : "transparent"
                     Behavior on color { ColorAnimation { duration: 100 } }
                   }
 
@@ -1494,7 +1547,7 @@ Panel {
                   Rectangle {
                     anchors.fill: parent
                     radius: Style.cornerRadius
-                    color: root.settingsCursor === 9 ? Style.hoverFillFor(root.fg, Commons.Color.accent) : "transparent"
+                    color: root.settingsCursor === 10 ? Style.hoverFillFor(root.fg, Commons.Color.accent) : "transparent"
                     Behavior on color { ColorAnimation { duration: 100 } }
                   }
 
@@ -1585,7 +1638,7 @@ Panel {
       spacing: Style.space(7)
 
       CursorRow {
-        active: root.settingsCursor === 10
+        active: root.settingsCursor === 11
 
         Row {
           anchors.centerIn: parent
@@ -1626,7 +1679,7 @@ Panel {
       }
 
       CursorRow {
-        active: root.settingsCursor === 11
+        active: root.settingsCursor === 12
 
         Row {
           anchors.centerIn: parent
@@ -1667,7 +1720,7 @@ Panel {
       }
 
       CursorRow {
-        active: root.settingsCursor === 12
+        active: root.settingsCursor === 13
 
         Row {
           anchors.centerIn: parent
@@ -1730,7 +1783,7 @@ Panel {
       spacing: Style.space(7)
 
       CursorRow {
-        active: root.settingsCursor === 13
+        active: root.settingsCursor === 14
 
         Row {
           anchors.centerIn: parent
@@ -1771,7 +1824,7 @@ Panel {
       }
 
       CursorRow {
-        active: root.settingsCursor === 14
+        active: root.settingsCursor === 15
 
         Row {
           anchors.centerIn: parent
@@ -1812,7 +1865,7 @@ Panel {
       }
 
       CursorRow {
-        active: root.settingsCursor === 15
+        active: root.settingsCursor === 16
 
         Row {
           anchors.centerIn: parent
@@ -1853,7 +1906,7 @@ Panel {
       }
 
       CursorRow {
-        active: root.settingsCursor === 16
+        active: root.settingsCursor === 17
 
         Row {
           anchors.centerIn: parent
@@ -1894,7 +1947,7 @@ Panel {
       }
 
       CursorRow {
-        active: root.settingsCursor === 17
+        active: root.settingsCursor === 18
 
         Row {
           anchors.centerIn: parent
@@ -1935,7 +1988,7 @@ Panel {
       }
 
       CursorRow {
-        active: root.settingsCursor === 18
+        active: root.settingsCursor === 19
 
         Row {
           anchors.centerIn: parent
@@ -1976,7 +2029,7 @@ Panel {
       }
 
       CursorRow {
-        active: root.settingsCursor === 19
+        active: root.settingsCursor === 20
 
         Row {
           anchors.centerIn: parent
@@ -2019,32 +2072,138 @@ Panel {
   }
 
 
-  CenterWindow {
-    id: window
-    anchorItem: root.anchorItem
-    bar: root.bar
-    owner: root
-    open: root.opened
-    mode: root.store ? root.store.mode : "window"
-    placement: root.store ? root.store.placement : "top-right"
-    marginX: root.store ? root.store.marginX : 12
-    marginY: root.store ? root.store.marginY : 12
-    padding: root.store ? root.store.padding : 12
-    desiredWidth: {
-      if (!root.horizontal) return Style.space(430)
-      var spacing = root.store ? root.store.cardSpacing : 10
-      var count = root.visibleEntries.length
-      var cards = count > 0 ? count * Style.space(280) + (count - 1) * spacing : 0
-      var content = Math.max(Style.space(480), cards)
-      if (root.settingsOpen) content = Math.max(content, Style.space(920))
-      else if (root.selectedEntry !== null) content = Math.max(content, Style.space(760))
-      return content
-    }
-    desiredHeight: root.activeContentHeight + (root.footerVisible ? shortcutFooter.height : 0)
-      + (root.settingsOpen ? Style.space(16) : 0)
-    focusTarget: keyCatcher
+  onScreenListChanged: root.clampScreenCursor()
 
+  Variants {
+    model: root.centerScreens
+
+    CenterWindow {
+      id: centerWindow
+      required property var modelData
+      screenName: String(modelData.name || "")
+      anchorItem: root.anchorItem
+      bar: root.bar
+      owner: root
+      open: root.opened
+      isPrimary: root.centerScreens.length > 0
+        && String(modelData.name || "") === String(root.centerScreens[0].name || "")
+      mode: root.store ? root.store.mode : "window"
+      placement: root.store ? root.store.placement : "top-right"
+      marginX: root.store ? root.store.marginX : 12
+      marginY: root.store ? root.store.marginY : 12
+      padding: root.store ? root.store.padding : 12
+      desiredWidth: {
+        if (!root.horizontal) return Style.space(430)
+        var spacing = root.store ? root.store.cardSpacing : 10
+        var count = root.visibleEntries.length
+        var cards = count > 0 ? count * Style.space(280) + (count - 1) * spacing : 0
+        var content = Math.max(Style.space(480), cards)
+        if (root.settingsOpen) content = Math.max(content, Style.space(920))
+        else if (root.selectedEntry !== null) content = Math.max(content, Style.space(760))
+        return content
+      }
+      desiredHeight: (contentLoader.item ? contentLoader.item.activeContentHeight : 0)
+        + (root.footerVisible && contentLoader.item ? contentLoader.item.footerHeight : 0)
+        + (root.settingsOpen ? Style.space(16) : 0)
+      focusTarget: contentLoader.item ? contentLoader.item.keyCatcher : null
+
+      Loader {
+        id: contentLoader
+        anchors.fill: parent
+        sourceComponent: centerContentComponent
+        onLoaded: {
+          if (!item) return
+          item.cardWidth = Qt.binding(function() { return centerWindow.cardW })
+          if (centerWindow.isPrimary)
+            root.activeContent = item
+          if (centerWindow.open)
+            item.keyCatcher.forceActiveFocus()
+        }
+      }
+
+      onOpenChanged: {
+        if (open && (isPrimary || hostFocused)) root.activeContent = contentLoader.item
+      }
+      onHostFocusedChanged: {
+        if (open && hostFocused) root.activeContent = contentLoader.item
+      }
+    }
+  }
+
+  Component {
+    id: centerContentComponent
     Item {
+      id: contentRoot
+      property alias keyCatcher: keyCatcher
+      property alias searchField: searchField
+      property alias scrollView: scrollView
+      property real cardWidth: 430
+      readonly property real footerHeight: shortcutFooter.height
+      readonly property real activeContentHeight: {
+        var h = headerRow.height + headerSeparator.height
+        var count = 2
+        if (root.searchOpen) { h += searchField.height; count++ }
+        if (root.clearArmed) { h += clearBanner.height; count++ }
+        var view = root.helpOpen ? helpColumn
+          : (root.settingsOpen ? settingsColumn
+          : (root.selectedEntry !== null ? detailColumn : listSection))
+        if (view) h += view.implicitHeight
+        count++
+        return h + Style.space(10) * (count - 1)
+      }
+
+      // Keep the cursor's row visible without fighting normal scrolling: only
+      // nudge the Flickable when the row would otherwise sit outside the view.
+      function scrollCursorIntoView() {
+        if (root.cursorIndex < 0) return
+        if (root.horizontal) {
+          var card = null
+          for (var c = 0; c < bandRow.children.length; c++) {
+            var candidate = bandRow.children[c]
+            if (candidate && candidate.rowIndex !== undefined && candidate.rowIndex === root.cursorIndex) {
+              card = candidate
+              break
+            }
+          }
+          if (!card) return
+          var hmargin = Style.space(16)
+          var left = bandScroll.contentX + hmargin
+          var right = bandScroll.contentX + bandScroll.width - hmargin
+          if (card.x >= left && card.x + card.width <= right) return
+          var maxX = Math.max(0, bandScroll.contentWidth - bandScroll.width)
+          if (card.x < left) bandScroll.contentX = Math.max(0, card.x - hmargin)
+          else bandScroll.contentX = Math.min(maxX, card.x + card.width - bandScroll.width + hmargin)
+          return
+        }
+        if (!listRows) return
+        var row = null
+        var groupY = 0
+        for (var g = 0; g < listRows.children.length; g++) {
+          var group = listRows.children[g]
+          if (!group) continue
+          for (var i = 0; i < group.children.length; i++) {
+            var child = group.children[i]
+            if (child && child.rowIndex !== undefined && child.rowIndex === root.cursorIndex) {
+              row = child
+              groupY = group.y
+              break
+            }
+          }
+          if (row) break
+        }
+        if (!row) return
+
+        var margin = Style.space(24)
+        var rowY = listRows.y + groupY + row.y
+        var top = scrollView.contentY + margin
+        var bottom = scrollView.contentY + scrollView.height - margin
+        if (rowY >= top && rowY + row.height <= bottom) return
+
+        var maxY = Math.max(0, scrollView.contentHeight - scrollView.height)
+        if (rowY < top) scrollView.contentY = Math.max(0, rowY - margin)
+        else scrollView.contentY = Math.min(maxY, rowY + row.height - scrollView.height + margin)
+      }
+
       anchors.fill: parent
 
       // Del / Shift+Del are not covered by PanelKeyCatcher.
@@ -2068,15 +2227,21 @@ Panel {
         id: keyCatcher
         anchors.fill: parent
         blocked: searchField.activeFocus
-        onCloseRequested: root.closeView()
+        onActiveFocusChanged: if (activeFocus) root.activeContent = contentRoot
+        onCloseRequested: { root.activeContent = contentRoot; root.closeView() }
         onTabRequested: function(direction) {
+          root.activeContent = contentRoot
           root.close()
           root.switchPanel(direction)
         }
-        onMoveRequested: function(dx, dy) { root.handleMove(dx, dy) }
-        onActivateRequested: root.handleActivate()
-        onDeleteRequested: root.handleDelete(false)
+        onMoveRequested: function(dx, dy) {
+          root.activeContent = contentRoot
+          root.handleMove(dx, dy)
+        }
+        onActivateRequested: { root.activeContent = contentRoot; root.handleActivate() }
+        onDeleteRequested: { root.activeContent = contentRoot; root.handleDelete(false) }
         onTextKey: function(t) {
+          root.activeContent = contentRoot
           if (root.searchOpen || root.settingsOpen) return
           if (root.helpOpen) {
             if (t === root.store.helpKey) root.toggleHelp()
@@ -2087,8 +2252,8 @@ Panel {
           else if (t === root.store.helpKey) root.toggleHelp()
           else if (t === root.store.searchKey) root.openSearch()
           else if (t === root.store.settingsKey) root.openSettings()
-          else if (t === "g") { root.cursorIndex = root.visibleEntries.length > 0 ? 0 : -1; root.scrollCursorIntoView() }
-          else if (t === "G") { root.cursorIndex = root.visibleEntries.length - 1; root.scrollCursorIntoView() }
+          else if (t === "g") { root.cursorIndex = root.visibleEntries.length > 0 ? 0 : -1; contentRoot.scrollCursorIntoView() }
+          else if (t === "G") { root.cursorIndex = root.visibleEntries.length - 1; contentRoot.scrollCursorIntoView() }
           else if (t === "C") root.handleClearShortcut()
         }
 
@@ -2099,7 +2264,7 @@ Panel {
           anchors.right: parent.right
           height: parent.height - (shortcutFooter.visible ? shortcutFooter.height : 0)
           contentWidth: width
-          contentHeight: root.activeContentHeight
+          contentHeight: contentRoot.activeContentHeight
           clip: true
           boundsBehavior: Flickable.StopAtBounds
           interactive: contentHeight > height
@@ -2573,7 +2738,7 @@ Panel {
                     // Bound the decoded texture, not just the painted size: a
                     // full-resolution notification image otherwise lands in
                     // VRAM at its native dimensions.
-                    sourceSize.width: Math.round(window.cardW * Screen.devicePixelRatio)
+                    sourceSize.width: Math.round(contentRoot.cardWidth * Screen.devicePixelRatio)
                     sourceSize.height: Math.round(Style.space(160) * Screen.devicePixelRatio)
                     fillMode: Image.PreserveAspectFit
                     asynchronous: true

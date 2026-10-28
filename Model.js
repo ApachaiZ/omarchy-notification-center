@@ -148,7 +148,8 @@ function parseCenterState(raw) {
   var text = String(raw || "").trim()
   var fallback = {
     lastSeen: 0, placement: "top-right", mode: "window",
-    marginX: 12, marginY: 12, padding: 12, cardSpacing: 10, confirmClear: true
+    marginX: 12, marginY: 12, padding: 12, cardSpacing: 10, confirmClear: true,
+    screens: [], screensLegacy: false
   }
   function clampInt(value, fallbackValue, min, max) {
     var n = Number(value)
@@ -169,10 +170,22 @@ function parseCenterState(raw) {
     var legacyX = (parsed && parsed.marginLeft !== undefined) ? parsed.marginLeft : legacy
     var legacyY = (parsed && parsed.marginTop !== undefined) ? parsed.marginTop : legacy
     var confirmClear = !(parsed && parsed.confirmClear === false)
+    var screens = []
+    var screensLegacy = false
+    if (parsed && Array.isArray(parsed.screens)) {
+      for (var i = 0; i < parsed.screens.length; i++)
+        if (typeof parsed.screens[i] === "string" && parsed.screens[i] !== "")
+          screens.push(parsed.screens[i])
+    } else if (parsed && typeof parsed.screen === "string" && parsed.screen !== "") {
+      screens.push(parsed.screen)
+      screensLegacy = true
+    }
     return {
       lastSeen: seen,
       placement: placement,
       mode: mode,
+      screens: screens,
+      screensLegacy: screensLegacy,
       marginX: clampInt(parsed && parsed.marginX, clampInt(legacyX, 12, 0, 64), 0, 64),
       marginY: clampInt(parsed && parsed.marginY, clampInt(legacyY, 12, 0, 64), 0, 64),
       padding: clampInt(parsed && parsed.padding, 12, 4, 32),

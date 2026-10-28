@@ -2,25 +2,26 @@
 
 ![Omarchy Notification Center — your notifications, your layout](preview.png)
 
-A GNOME-style notification center for [Omarchy](https://omarchy.org) Quattro.
-The shell already shows toast notifications; this plugin adds somewhere to look
-back at them: a scrollable list of cards, a detail card per notification,
-30 days of private history, search, dismiss one or all, an unread badge,
-Do Not Disturb, and a settings view for layout, spacing, and shortcuts.
+A GNOME-style notification daemon and center for
+[Omarchy](https://omarchy.org) Quattro. The plugin owns the notification server
+and its toasts, and adds somewhere to look back at them: a scrollable list of
+cards, a detail card per notification, 30 days of private history, search,
+dismiss one or all, an unread badge, Do Not Disturb, and a settings view for
+layout, spacing, monitor, and shortcuts.
 
 ![Notification list on an empty desktop](screenshots/center-list.jpg)
 
 ## Features
 
-- **30 days of history** — notifications currently on screen plus a private
-  archive (30 days, up to 1000 entries) that outlives the shell service's
-  short rolling history.
+- **30 days of history** — notifications currently on screen plus one shared
+  archive (30 days, up to 1000 entries) owned by the daemon and read directly
+  by the center.
 - **Search** — `/` (or `Ctrl+F`) and the header icon filter app names, titles,
   and bodies.
 - **Date groups** — the list separates Today, Yesterday, weekdays, and older
   dates.
-- **Archived images** — notification images are copied into the private
-  archive (unless previews are disabled) and pruned with the history.
+- **Archived images** — notification images are copied once into the shared
+  archive, pruned with the history, and purged when previews are disabled.
 - **Card list** — app icon, app name, relative time, title, and a body preview.
   The keyboard cursor is the only card with the theme's accent border.
 - **Detail view** — full summary, full body, and the attached image when the
@@ -50,8 +51,14 @@ Do Not Disturb, and a settings view for layout, spacing, and shortcuts.
 - **Placement settings** — choose the window position (top/bottom ×
   left/center/right) with a fine edge margin, and move the bar icon between the
   left, center, and right sections with an exact index.
-- **Theme-aware and multi-monitor** — colors, radius, and fonts come from the
-  active Omarchy theme; the panel opens on the focused monitor.
+- **Chosen monitors** — pin the center and its toasts to one or several of the
+  detected outputs (up to four). The choice is explicit and independent of the
+  focused monitor; selecting both shows both windows on both screens.
+- **Matching toasts** — toasts use the center's position; a centered vertical
+  placement is clamped to the top so a toast never sits in the middle of the
+  screen.
+- **Theme-aware** — colors, radius, and fonts come from the active Omarchy
+  theme.
 
 | List | Search |
 | --- | --- |
@@ -103,6 +110,12 @@ default; `Shift+P` is selectable) opens the settings view:
   A vertical band always hangs from the top: its Bottom row and the
   `Center Screen` button are disabled, and only the left/center/right anchor
   applies.
+- **Screens** — choose one or more detected monitors (up to four) that host
+  both the center and its toasts. The list comes from the outputs present at
+  runtime, not from hardcoded names or the focused monitor. Left/right moves
+  the screen cursor, `Enter` toggles it, and the buttons also toggle directly.
+  If a chosen output disappears, both surfaces fall back to the same remaining
+  output.
 - **Bar icon** — `Left`, `Center`, or `Right` section, plus a position stepper
   for the exact index inside that section. Moves go through
   `omarchy bar move`, so the bar updates immediately.

@@ -5,9 +5,16 @@
   "version": "1.6.0",
   "author": "apach",
   "license": "GPL-3.0",
-  "description": "Keyboard-first notification center: floating window or horizontal/vertical band, 30-day history, search, dismiss, Do Not Disturb, and open-the-sender cards.",
-  "kinds": ["bar-widget"],
-  "entryPoints": { "barWidget": "BarWidget.qml" },
+  "description": "Notification daemon and keyboard-first center: toasts, floating window or horizontal/vertical band, 30-day history, search, dismiss, Do Not Disturb, and open-the-sender cards.",
+  "kinds": ["service", "bar-widget"],
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "keepLoaded": true,
+  "omarchy": {
+    "clonedFrom": "omarchy.notifications"
+  },
   "barWidget": {
     "displayName": "Notification Center",
     "description": "Notification history list with per-notification detail view and dismiss.",
