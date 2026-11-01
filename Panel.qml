@@ -46,7 +46,7 @@ Panel {
   property bool helpOpen: false
   property int settingsCursor: 0
   property int screenCursor: 0
-  readonly property int settingsRowCount: 22
+  readonly property int settingsRowCount: 23
   readonly property var screenList: Quickshell.screens
   readonly property var centerScreens: {
     var screens = Quickshell.screens
@@ -193,8 +193,7 @@ Panel {
   onOpenedChanged: {
     if (!root.store) return
     root.store.hostOpen = root.opened
-    if (root.store.service && typeof root.store.service.setCenterOpen === "function")
-      root.store.service.setCenterOpen(root.opened)
+    root.store.setCenterOpen(root.opened)
     if (root.opened) root.store.refresh()
   }
 
@@ -399,6 +398,7 @@ Panel {
     case 19: root.store.setDetailKey(root.store.detailKey === "I" ? "i" : "I"); break
     case 20: root.store.setHelpKey(root.store.helpKey === "F1" ? "?" : "F1"); break
     case 21: root.store.setSettingsKey(root.store.settingsKey === "P" ? "s" : "P"); break
+    case 22: root.store.installEngine(); break
     }
   }
 
@@ -409,6 +409,10 @@ Panel {
     }
     if (root.settingsCursor === 7) {
       root.toggleScreenAtCursor()
+      return
+    }
+    if (root.settingsCursor === 22) {
+      if (root.store) root.store.installEngine()
       return
     }
     root.adjustSettings(1)
@@ -1808,9 +1812,67 @@ Panel {
         width: parent.width
         leftPadding: Style.space(8)
         rightPadding: Style.space(8)
-        text: "Live toasts still appear. While enabled, this plugin replaces omarchy.notifications for display and management; disable it to use the stock service."
+        text: "Only applies with the notification engine: it controls history capture. Live toasts still appear; with omarchy.notifications this setting is ignored."
         color: root.fg
         opacity: 0.65
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        wrapMode: Text.WordWrap
+      }
+    }
+
+    Item {
+      width: parent.width
+      height: engineTitle.implicitHeight
+
+      PanelSectionHeader {
+        id: engineTitle
+        anchors.horizontalCenter: parent.horizontalCenter
+        text: "NOTIFICATION ENGINE"
+        foreground: root.fg
+        fontFamily: root.fontFamily
+      }
+    }
+
+    Column {
+      width: parent.width
+      spacing: Style.space(7)
+
+      CursorRow {
+        active: root.settingsCursor === 22
+
+        Row {
+          anchors.centerIn: parent
+          spacing: Style.space(6)
+
+          Text {
+            text: "Engine"
+            width: Style.space(100)
+            color: root.fg
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          Button {
+            text: root.store && root.store.engineInstallArmed ? "Confirm" : "Install"
+            Layout.preferredWidth: Style.space(78)
+            focusable: true
+            bordered: true
+            fontSize: Style.font.bodySmall
+            fontFamily: root.fontFamily
+            foreground: root.fg
+            onClicked: if (root.store) root.store.installEngine()
+          }
+        }
+      }
+
+      Text {
+        width: parent.width
+        leftPadding: Style.space(8)
+        rightPadding: Style.space(8)
+        text: "The center works without an engine and reads omarchy.notifications history. Installing the engine replaces omarchy.notifications and disables it; the center stays installed."
+        color: root.fg
+        opacity: 0.7
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
         wrapMode: Text.WordWrap

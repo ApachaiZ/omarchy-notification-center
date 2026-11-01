@@ -20,11 +20,9 @@ Item {
   readonly property string stateDir: home + "/.local/state/omarchy/notifications"
   readonly property string settingsPath: home + "/.local/state/omarchy/notifications.json"
   readonly property string centerStatePath: home + "/.local/state/omarchy/notifications-center.json"
-
-  // Injected by BarWidget from the merged plugin's service. When present, the
-  // live rows come straight from the service model and DND is a direct call;
-  // the file readers below remain only as a fallback.
-  property var service: null
+  readonly property string archivePath: home + "/.local/state/omarchy/notifications-archive.json"
+  readonly property string historyDir: stateDir + "/history"
+  readonly property string engineRepoUrl: "https://github.com/ApachaiZ/omarchy-notification-engine"
 
   property bool dnd: false
   property double lastSeen: 0
@@ -72,12 +70,17 @@ Item {
   property var barSizes: ({})
 
   property var liveEntries: []
+  property var archiveFileEntries: []
+  property var historyEntries: []
   property var archiveEntries: []
   property var entries: []
   property string mergeSignature: ""
 
   // ---- action queue (one serialized Process for all mutating actions) ----
   property var actionQueue: []
+  // Two-step install for the optional engine: the first click arms, the second
+  // installs. The warning is visible in the settings row.
+  property bool engineInstallArmed: false
 
   // Stems whose files we just deleted ourselves. The service may still be
   // mid-archive (or the dir watch may fire on a file that is about to
@@ -96,83 +99,32 @@ Item {
 
   // ---- data ----
 
-  Connections {
-    target: store.service
-    ignoreUnknownSignals: true
-    function onDoNotDisturbChanged() {
-      store.dnd = store.service.doNotDisturb === true
-    }
-    function onArchiveEntriesChanged() {
-      store.onArchiveChanged()
-    }
-  }
-
-  // Live toast rows change in place as clients update them through
-  // replaces_id, and rows leave when a toast is dismissed or expires.
-  Connections {
-    target: store.service ? store.service.popupModel : null
-    ignoreUnknownSignals: true
-    function onRowsInserted() { store.refreshLive() }
-    function onRowsRemoved() { store.refreshLive() }
-    function onDataChanged() { store.refreshLive() }
-    function onModelReset() { store.refreshLive() }
-  }
-
   function refresh() {
-    if (store.service) store.refreshLive()
-    else if (!liveReadProc.running) liveReadProc.running = true
-    if (!store.service) settingsFile.reload()
-  }
-
-  function onServiceChanged() {
-    if (!store.service) return
-    if (typeof store.service.setCenterOpen === "function")
-      store.service.setCenterOpen(store.hostOpen === true)
-    store.dnd = store.service.doNotDisturb === true
-    store.service.captureToasts = store.captureToasts
-    store.archiveEntries = store.service.archiveEntries || []
-    store.refreshLive()
-  }
-
-  function onArchiveChanged() {
-    if (!store.service) return
-    store.archiveEntries = store.service.archiveEntries || []
-    store.rebuildEntries()
-  }
-
-  // Snapshot the service's live ListModel. Roles are copied out because a
-  // model row is not stable across service updates.
-  function refreshLive() {
-    if (!store.service) return
-    var model = store.service.popupModel
-    if (!model) return
-    var out = []
-    for (var i = 0; i < model.count; i++) {
-      var row = model.get(i)
-      if (!row) continue
-      out.push({
-        id: Number(row.id || 0),
-        originalId: Number(row.originalId || 0),
-        app: String(row.app || ""),
-        appIcon: String(row.appIcon || ""),
-        summary: String(row.summary || ""),
-        body: String(row.body || ""),
-        image: String(row.image || ""),
-        glyph: String(row.glyph || ""),
-        execArgv: String(row.execArgv || ""),
-        urgency: typeof row.urgency === "number" ? row.urgency : 1,
-        timestamp: Number(row.timestamp || 0),
-        stem: Model.imageStem(row.timestamp, row.originalId),
-        source: "live"
-      })
-    }
-    store.liveEntries = store.filterSuppressed(out)
-    store.rebuildEntries()
+    if (!liveReadProc.running) liveReadProc.running = true
+    if (!historyReadProc.running) historyReadProc.running = true
+    archiveFile.reload()
+    settingsFile.reload()
   }
 
   function onLiveRead(raw) {
-    if (store.service) return
     store.liveEntries = store.filterSuppressed(Model.parseEntries(raw, "live"))
+    store.rebuildEntries()
+  }
+
+  function onHistoryRead(raw) {
+    store.historyEntries = store.filterSuppressed(Model.parseEntries(raw, "history"))
+    store.rebuildArchive()
+  }
+
+  function onArchiveLoaded(raw) {
+    store.archiveFileEntries = store.filterSuppressed(Model.parseArchive(raw))
+    store.rebuildArchive()
+  }
+
+  function rebuildArchive() {
+    // The engine writes one archive JSON; the stock service writes one file
+    // per entry under history/. Merge both so the center works with either.
+    store.archiveEntries = Model.mergeEntries(store.archiveFileEntries, store.historyEntries)
     store.rebuildEntries()
   }
 
@@ -257,7 +209,6 @@ Item {
     store.showPreviews = parsed.showPreviews
     store.showBadge = parsed.showBadge
     store.captureToasts = parsed.captureToasts !== false
-    if (store.service) store.service.captureToasts = store.captureToasts
     store.searchKey = parsed.searchKey
     store.dndKey = parsed.dndKey
     store.detailKey = parsed.detailKey
@@ -476,8 +427,8 @@ Item {
     if (store.showPreviews === next) return
     store.showPreviews = next
     store.scheduleCenterStateSave()
-    if (!next && store.service && typeof store.service.purgeArchiveImages === "function")
-      store.service.purgeArchiveImages()
+    // The engine implements this; the stock service ignores the unknown IPC.
+    if (!next) store.enqueueAction(["omarchy-shell", "-q", "notifications", "purgeImages"])
   }
 
   function setShowBadge(value) {
@@ -491,8 +442,27 @@ Item {
     var next = !!value
     if (store.captureToasts === next) return
     store.captureToasts = next
-    if (store.service) store.service.captureToasts = next
+    // The engine watches notifications-center.json and applies this. The
+    // stock service ignores it and always keeps its own history.
     store.scheduleCenterStateSave()
+  }
+
+  function installEngine() {
+    if (!store.engineInstallArmed) {
+      store.engineInstallArmed = true
+      engineArmTimer.restart()
+      return
+    }
+    store.engineInstallArmed = false
+    engineArmTimer.stop()
+    store.enqueueAction(["omarchy", "plugin", "add", store.engineRepoUrl, "--enable", "--yes"])
+  }
+
+  Timer {
+    id: engineArmTimer
+    interval: 4000
+    repeat: false
+    onTriggered: store.engineInstallArmed = false
   }
 
   function setSearchKey(value) {
@@ -558,15 +528,13 @@ Item {
   function deleteEntry(entry) {
     if (!entry || !entry.stem) return
     var stem = String(entry.stem)
-    store.suppress(stem, 2500)
-
-    if (store.service && typeof store.service.forgetEntry === "function") {
-      store.service.forgetEntry(stem)
-    } else {
-      store.enqueueAction(["bash", "-c",
-        'omarchy-shell -q notifications dismiss "$2" || true; rm -f "$1/$3.json"',
-        "--", store.stateDir, String(entry.summary || ""), stem])
-    }
+    store.suppress(stem, 3000)
+    store.enqueueAction(["bash", "-c",
+      "omarchy-shell -q notifications dismiss \"$2\" || true\n" +
+      "omarchy-shell -q notifications forget \"$3\" >/dev/null 2>&1 || true\n" +
+      "sleep 0.3\n" +
+      "rm -f \"$1/$3.json\" \"$1/history/$3.json\" \"$1/images/$3\"-*",
+      "--", store.stateDir, String(entry.summary || ""), stem])
     store.removeLocal(stem)
   }
 
@@ -580,14 +548,8 @@ Item {
   // Dismiss every on-screen toast, then wipe the unified archive.
   function clearAll() {
     for (var i = 0; i < store.entries.length; i++) store.suppress(store.entries[i].stem, 3500)
-    if (store.service) {
-      store.service.clearPopups()
-      if (typeof store.service.clearArchive === "function") store.service.clearArchive()
-      else store.service.clearHistory()
-    } else {
-      store.enqueueAction(["bash", "-c",
-        'omarchy-shell -q notifications dismissAll && omarchy-shell -q notifications clear', "--"])
-    }
+    store.enqueueAction(["bash", "-c",
+      'omarchy-shell -q notifications dismissAll && omarchy-shell -q notifications clear', "--"])
     store.liveEntries = []
     store.archiveEntries = []
     store.entries = []
@@ -596,14 +558,16 @@ Item {
   }
 
   function toggleDnd() {
-    if (store.service) {
-      store.service.setDoNotDisturb(!store.service.doNotDisturb)
-      store.dnd = store.service.doNotDisturb === true
-      return
-    }
     store.enqueueAction(["omarchy-shell", "-q", "notifications", "toggleDnd"])
-    // The service debounces its settings write; sync again shortly after.
+    // The active service debounces its settings write; sync again shortly.
     dndSyncTimer.restart()
+  }
+
+  function setCenterOpen(value) {
+    // The engine uses this to hide toasts while the center is open. The stock
+    // service ignores the unknown IPC.
+    store.enqueueAction(["omarchy-shell", "-q", "notifications", "setCenterOpen",
+      value ? "true" : "false"])
   }
 
   // ---- processes ----
@@ -612,6 +576,12 @@ Item {
     id: liveReadProc
     command: ["bash", "-c", "awk 1 \"$1\"/*.json 2>/dev/null || true", "--", store.stateDir]
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: store.onLiveRead(text) }
+  }
+
+  Process {
+    id: historyReadProc
+    command: ["bash", "-c", "awk 1 \"$1\"/*.json 2>/dev/null || true", "--", store.historyDir]
+    stdout: StdioCollector { waitForEnd: true; onStreamFinished: store.onHistoryRead(text) }
   }
 
   Process {
@@ -628,8 +598,8 @@ Item {
     watchChanges: false
     atomicWrites: false
     printErrors: false
-    onLoaded: store.dnd = store.service ? store.service.doNotDisturb === true : Model.parseSettings(text()).dnd
-    onLoadFailed: store.dnd = store.service ? store.service.doNotDisturb === true : false
+    onLoaded: store.dnd = Model.parseSettings(text()).dnd
+    onLoadFailed: store.dnd = false
   }
 
   FileView {
@@ -656,13 +626,33 @@ Item {
     onLoaded: store.parseShellConfig(text())
   }
 
-  // Directory watch for the fallback path only. The merged service pushes
-  // live rows and archive changes through its properties, so the center has
-  // no file watchers or polling while the service is live.
+  // The optional engine writes one archive JSON; the stock service writes one
+  // file per entry under history/. Read both so either service works.
+  FileView {
+    id: archiveFile
+    path: store.archivePath
+    watchChanges: true
+    atomicWrites: false
+    printErrors: false
+    onLoaded: store.onArchiveLoaded(text())
+    onLoadFailed: store.onArchiveLoaded("")
+    onFileChanged: reload()
+  }
+
+  // Directory watches are the primary trigger. The timers are only a safety
+  // net for filesystems where a directory watch does not fire.
   FileView {
     id: liveDirWatch
     path: store.stateDir
-    watchChanges: store.service === null
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reloadTimer.restart()
+  }
+
+  FileView {
+    id: historyDirWatch
+    path: store.historyDir
+    watchChanges: true
     printErrors: false
     onFileChanged: reloadTimer.restart()
   }
@@ -674,13 +664,13 @@ Item {
     onTriggered: store.refresh()
   }
 
-  // While the center is open the provider polls faster so toasts appear as
-  // they arrive; the directory watches usually fire first.
+  // While the center is open, poll slowly as a fallback; the watches usually
+  // fire first. Reading the whole history every few seconds was wasteful.
   Timer {
     id: openPollTimer
-    interval: 2000
+    interval: 15000
     repeat: true
-    running: hostOpen && store.service === null
+    running: hostOpen
     onTriggered: store.refresh()
   }
 
@@ -689,7 +679,7 @@ Item {
     id: closedPollTimer
     interval: 60000
     repeat: true
-    running: !hostOpen && store.service === null
+    running: !hostOpen
     onTriggered: store.refresh()
   }
 

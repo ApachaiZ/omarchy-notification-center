@@ -2,18 +2,15 @@
   "schemaVersion": 1,
   "id": "apach.notifications",
   "name": "Notification Center",
-  "version": "2.1.0",
-  "author": "apach",
+  "version": "3.0.0",
+  "author": "ApachaiZ",
   "license": "GPL-3.0",
-  "description": "Notification daemon and keyboard-first center: live toasts, optional history capture, floating or band layouts, search, dismiss, Do Not Disturb, and open-the-sender cards. Replaces omarchy.notifications while enabled.",
-  "kinds": ["service", "bar-widget"],
+  "description": "Notification center for Omarchy: history, search, detail, DND, and an optional notification engine. Works with omarchy.notifications or the engine.",
+  "kinds": [
+    "bar-widget"
+  ],
   "entryPoints": {
-    "service": "Service.qml",
     "barWidget": "BarWidget.qml"
-  },
-  "keepLoaded": true,
-  "omarchy": {
-    "clonedFrom": "omarchy.notifications"
   },
   "barWidget": {
     "displayName": "Notification Center",

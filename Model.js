@@ -129,6 +129,27 @@ function parseEntries(raw, source) {
   return entries
 }
 
+// Parse the engine's single archive JSON. It can be a bare array or an object
+// with an `entries` array; both are normalized through parseEntries so the
+// center applies the same sanitizing and numeric stem rules as for stock
+// history files.
+function parseArchive(raw) {
+  var text = String(raw || "").trim()
+  if (!text) return []
+  try {
+    var parsed = JSON.parse(text)
+    var list = Array.isArray(parsed) ? parsed
+      : (parsed && Array.isArray(parsed.entries) ? parsed.entries : [])
+    var lines = []
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] && typeof list[i] === "object") lines.push(JSON.stringify(list[i]))
+    }
+    return parseEntries(lines.join("\n"), "history")
+  } catch (e) {
+    return []
+  }
+}
+
 // Merge live popups and archived history, newest first. A file can exist in
 // both locations for an instant while the service archives it; the live
 // copy wins so a dismissal always targets the on-screen toast.
@@ -278,6 +299,7 @@ if (typeof module !== "undefined") {
     styledSanitizedBody: styledSanitizedBody,
     styledBody: styledBody,
     parseEntries: parseEntries,
+    parseArchive: parseArchive,
     mergeEntries: mergeEntries,
     signature: signature,
     hash: hash,
