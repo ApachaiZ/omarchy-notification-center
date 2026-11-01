@@ -325,7 +325,7 @@ function engineEnabledFromShellConfig(raw, engineId) {
 
 // Read the engine manifest version and compare dotted versions numerically.
 // The center uses this to refuse to delegate legacy cleanup to an engine older
-// than 1.0.4, which dropped expired archive entries without deleting their
+// than 1.0.5, which dropped expired archive entries without deleting their
 // images.
 function manifestVersion(raw) {
   try {
@@ -334,6 +334,20 @@ function manifestVersion(raw) {
   } catch (e) {
     return ""
   }
+}
+
+// Decide what the center may do with the pre-3.0 legacy tree. "delete" wipes
+// the whole directory (safe when no engine can reference it); "delegate"
+// leaves it to an enabled engine 1.0.5+ that migrates it and cleans expired
+// images itself; "wait" holds off because an enabled-but-older engine still
+// references image copies in that directory and may not have merged the
+// archive yet. cleanupRan/delegated make the same state idempotent while
+// allowing a transition (old engine -> updated, or enabled -> disabled) to
+// change the decision.
+function legacyCleanupAction(engineEnabled, engineVersionSafe, cleanupRan, delegated) {
+  if (!engineEnabled) return cleanupRan ? "done" : "delete"
+  if (engineVersionSafe) return delegated ? "done" : "delegate"
+  return "wait"
 }
 
 function versionAtLeast(value, minimum) {
@@ -378,6 +392,7 @@ if (typeof module !== "undefined") {
     safeAppIcon: safeAppIcon,
     imageStem: imageStem,
     engineEnabledFromShellConfig: engineEnabledFromShellConfig,
+    legacyCleanupAction: legacyCleanupAction,
     manifestVersion: manifestVersion,
     versionAtLeast: versionAtLeast,
     styledSanitizedBody: styledSanitizedBody,

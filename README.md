@@ -57,10 +57,12 @@ All captures use synthetic notification content on an empty desktop.
   stock service, its own toasts keep the stock service's behavior. Every text
   element is rendered as plain text, except notification bodies, which use
   styled text only after `<img>` tags have been stripped. The pre-3.0 private
-  archive is removed at startup unless `apach.notification-engine` is enabled
-  **and at least 1.0.5** to migrate it; an installed-but-disabled or older
-  engine no longer keeps it alive. The center updates an older installed engine
-  once and cleans the legacy tree itself until the next shell restart.
+  archive is removed at startup when no engine is enabled, and an
+  installed-but-disabled engine no longer keeps it alive. An enabled engine at
+  least 1.0.5 migrates the archive and cleans expired images itself; an
+  enabled older engine is updated once per session, and the legacy tree stays
+  untouched until the updated engine takes over, so retained history never
+  loses the image copies or the archive it still has to merge.
 - **Keyboard control** — arrows or `h`/`j`/`k`/`l`, `Enter`, `Del`/`x`, `/`
   search, `d` Do Not Disturb, `Shift+C` clear, `g`/`G`, `?`, `Esc`, and
   the Settings key (default `s`). The search, DND, details, settings, and

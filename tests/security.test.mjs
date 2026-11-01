@@ -101,6 +101,25 @@ test("legacy cleanup follows the engine enabled state, not its directory", () =>
   assert.equal(Model.engineEnabledFromShellConfig(enabled, "other.plugin"), false)
 })
 
+test("legacy cleanup waits for old engines instead of deleting their images", () => {
+  const d = Model.legacyCleanupAction
+  // No engine can reference the tree: delete once, then stay done.
+  assert.equal(d(false, false, false, false), "delete")
+  assert.equal(d(false, false, true, false), "done")
+  // Safe engine owns the migration: delegate once, then stay done.
+  assert.equal(d(true, true, false, false), "delegate")
+  assert.equal(d(true, true, false, true), "done")
+  // Enabled but older engine still references legacy images and may not have
+  // merged the archive yet: never delete, wait instead.
+  assert.equal(d(true, false, false, false), "wait")
+  assert.equal(d(true, false, false, true), "wait")
+  assert.equal(d(true, false, true, false), "wait")
+  // Transitions change the decision: old engine updated to a safe version
+  // delegates, then disabling it wipes the tree.
+  assert.equal(d(true, true, false, false), "delegate")
+  assert.equal(d(false, false, false, true), "delete")
+})
+
 test("engine versions are compared numerically", () => {
   assert.equal(Model.versionAtLeast("1.0.5", "1.0.5"), true)
   assert.equal(Model.versionAtLeast("1.0.6", "1.0.5"), true)

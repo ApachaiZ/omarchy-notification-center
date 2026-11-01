@@ -116,6 +116,7 @@ Item {
   }
 
   property bool legacyCleanupStarted: false
+  property bool legacyCleanupDelegated: false
   property bool engineEnabled: false
   property string engineVersion: ""
   property bool engineManifestLoaded: false
@@ -125,12 +126,30 @@ Item {
   // The v3 center keeps no private archive. With the stock service the old
   // v1.6 archive would otherwise sit on disk forever, past its retention and
   // after "Clear all". Only an enabled engine whose manifest is at least
-  // 1.0.4 can safely own the migration: older engines dropped expired entries
-  // without deleting their images. Wait for both shell.json and the engine
-  // manifest so the decision is based on configuration and version.
+  // 1.0.5 can safely own the migration: older engines dropped expired entries
+  // without deleting their images, and they preserve image references into
+  // the legacy directory, so deleting the whole tree would break retained
+  // history and an archive they may not have merged yet. Wait for both
+  // shell.json and the engine manifest so the decision is based on
+  // configuration and version.
   function cleanupLegacyArchive() {
     if (!store.shellConfigLoaded || !store.engineManifestLoaded) return
-    if (store.legacyCleanupStarted) return
+    var action = Model.legacyCleanupAction(store.engineEnabled,
+      store.engineVersionSafe, store.legacyCleanupStarted, store.legacyCleanupDelegated)
+    if (action === "done") return
+    if (action === "wait") {
+      // Enabled but older (or missing) engine: hold off. maybeUpdateEngine()
+      // upgrades the checkout once per session; this function re-runs on the
+      // next manifest or shell config change and the decision is revisited.
+      store.legacyCleanupDelegated = false
+      return
+    }
+    if (action === "delegate") {
+      // 1.0.5+ migrates the legacy archive and queues image cleanup for the
+      // entries it drops; the center must not touch the tree.
+      store.legacyCleanupDelegated = true
+      return
+    }
     store.legacyCleanupStarted = true
     legacyCleanupProc.running = true
   }
@@ -692,9 +711,8 @@ Item {
   Process {
     id: legacyCleanupProc
     command: ["bash", "-c",
-      '[[ -d "$3" ]] || exit 0\n[[ "$1" == "enabled" && "$2" == "safe" ]] && exit 0\nrm -rf -- "$3"',
-      "--", store.engineEnabled ? "enabled" : "disabled",
-      store.engineVersionSafe ? "safe" : "unsafe", store.legacyDir]
+      '[[ -d "$1" ]] || exit 0\nrm -rf -- "$1"',
+      "--", store.legacyDir]
     running: false
   }
 
