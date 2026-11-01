@@ -64,3 +64,16 @@ test("captureToasts defaults on and can be disabled", () => {
   assert.equal(Model.parseCenterState(JSON.stringify({ captureToasts: false })).captureToasts, false)
   assert.equal(Model.parseCenterState(JSON.stringify({ captureToasts: true })).captureToasts, true)
 })
+
+test("oversized persisted rows are clipped when parsed", () => {
+  const raw = JSON.stringify({
+    app: "a".repeat(400), summary: "s".repeat(2000), body: "b".repeat(20000),
+    glyph: "g".repeat(40), timestamp: 1, originalId: 2
+  }) + "\n"
+  const [row] = Model.parseEntries(raw, "history")
+  assert.equal(row.app.length, Model.limits.app)
+  assert.equal(row.summary.length, Model.limits.summary)
+  assert.equal(row.body.length, Model.limits.body)
+  assert.equal(row.glyph.length, Model.limits.glyph)
+  assert.equal(Model.clipText("a\u0000b", 10), "ab")
+})

@@ -256,7 +256,9 @@ center clears the active service's history.
 
 Notification images are copied only from local files by the engine; remote
 URLs and other URI schemes are dropped, so displaying a notification never
-fetches the network. Bodies render as StyledText with `<img>` tags stripped
+fetches the network. App names, titles and bodies are capped while parsing
+(256/512/8192 characters), so a malformed or oversized history file cannot
+exhaust memory. Bodies render as StyledText with `<img>` tags stripped
 before Qt parses them. The private archive, history, and image directories are
 created with mode `0700`. With **Capture toasts** off, the engine does not
 write new notifications to the archive; they stay in memory for their live

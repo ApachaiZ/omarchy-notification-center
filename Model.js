@@ -69,6 +69,19 @@ function safeAppIcon(value) {
   return s
 }
 
+// The active service may be the stock one, or an older archive restored from
+// disk. Either way the files are untrusted input, so bound what the center
+// keeps in memory and draws. Same caps as the engine.
+var MAX_APP_LENGTH = 256
+var MAX_GLYPH_LENGTH = 16
+var MAX_SUMMARY_LENGTH = 512
+var MAX_BODY_LENGTH = 8192
+
+function clipText(value, max) {
+  var text = String(value || "").replace(/\u0000/g, "")
+  return text.length > max ? text.slice(0, max) : text
+}
+
 function imageStem(timestamp, originalId) {
   var ts = Number(timestamp || 0)
   var id = Number(originalId || 0)
@@ -110,12 +123,12 @@ function parseEntries(raw, source) {
       var row = {
         id: Number(v.id || 0),
         originalId: originalId,
-        app: String(v.app || ""),
+        app: clipText(v.app, MAX_APP_LENGTH),
         appIcon: safeAppIcon(v.appIcon || ""),
-        summary: String(v.summary || ""),
-        body: String(v.body || ""),
+        summary: clipText(v.summary, MAX_SUMMARY_LENGTH),
+        body: clipText(v.body, MAX_BODY_LENGTH),
         image: safeImageSource(v.image || ""),
-        glyph: String(v.glyph || ""),
+        glyph: clipText(v.glyph, MAX_GLYPH_LENGTH),
         execArgv: String(v.execArgv || ""),
         urgency: typeof v.urgency === "number" ? v.urgency : 1,
         timestamp: timestamp,
@@ -309,6 +322,13 @@ if (typeof module !== "undefined") {
     styledBody: styledBody,
     parseEntries: parseEntries,
     parseArchive: parseArchive,
+    clipText: clipText,
+    limits: {
+      app: MAX_APP_LENGTH,
+      glyph: MAX_GLYPH_LENGTH,
+      summary: MAX_SUMMARY_LENGTH,
+      body: MAX_BODY_LENGTH
+    },
     mergeEntries: mergeEntries,
     signature: signature,
     hash: hash,
