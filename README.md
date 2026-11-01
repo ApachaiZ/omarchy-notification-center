@@ -259,6 +259,12 @@ and image copies under `notifications/images/`. With the stock service, the
 center reads the stock service's own history and image copies. Clearing the
 center clears the active service's history.
 
+The pre-3.0 plugin kept a private archive under
+`~/.local/state/omarchy/notifications-center/`. v3 never reads it: on upgrade
+it is removed when the engine is not installed, or merged by the engine when
+it is. **Clear all** deletes it in every case, so no old notification copy
+survives past the active service's retention.
+
 Notification images are copied only from local files by the engine; remote
 URLs and other URI schemes are dropped, so displaying a notification never
 fetches the network. App names, titles and bodies are capped while parsing

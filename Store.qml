@@ -24,6 +24,10 @@ Item {
   readonly property string historyDir: stateDir + "/history"
   readonly property string engineRepoUrl: "https://github.com/ApachaiZ/omarchy-notification-engine"
   readonly property string engineDir: home + "/.config/omarchy/plugins/apach.notification-engine"
+  // Private archive written by the pre-3.0 monolithic plugin. v3 never reads
+  // it; it is removed on upgrade unless the engine is installed and can merge
+  // it first.
+  readonly property string legacyDir: home + "/.local/state/omarchy/notifications-center"
 
   property bool dnd: false
   property double lastSeen: 0
@@ -102,9 +106,22 @@ Item {
 
   Component.onCompleted: {
     store.refresh()
+    store.cleanupLegacyArchive()
     // FileView can fire onLoaded more than once during startup; the guard
     // inside loadCenterState handles that.
     Qt.callLater(function() { centerStateFile.reload() })
+  }
+
+  property bool legacyCleanupStarted: false
+
+  // The v3 center keeps no private archive. With the stock service the old
+  // v1.6 archive would otherwise sit on disk forever, past its retention and
+  // after "Clear all". The engine owns the migration path when it is
+  // installed, so leave the data for it in that case.
+  function cleanupLegacyArchive() {
+    if (store.legacyCleanupStarted) return
+    store.legacyCleanupStarted = true
+    legacyCleanupProc.running = true
   }
 
   // ---- data ----
@@ -591,7 +608,9 @@ Item {
   function clearAll() {
     for (var i = 0; i < store.entries.length; i++) store.suppress(store.entries[i].stem, 3500)
     store.enqueueAction(["bash", "-c",
-      'omarchy-shell -q notifications dismissAll && omarchy-shell -q notifications clear', "--"])
+      'omarchy-shell -q notifications dismissAll || true\n' +
+      'omarchy-shell -q notifications clear || true\n' +
+      'rm -rf -- "$1"', "--", store.legacyDir])
     store.liveEntries = []
     store.archiveEntries = []
     store.entries = []
@@ -624,6 +643,14 @@ Item {
     id: historyReadProc
     command: ["bash", "-c", "awk 1 \"$1\"/*.json 2>/dev/null || true", "--", store.historyDir]
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: store.onHistoryRead(text) }
+  }
+
+  Process {
+    id: legacyCleanupProc
+    command: ["bash", "-c",
+      '[[ -d "$2" ]] || exit 0\n[[ -d "$1" ]] && exit 0\nrm -rf -- "$2"',
+      "--", store.engineDir, store.legacyDir]
+    running: false
   }
 
   Process {
