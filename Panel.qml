@@ -115,7 +115,8 @@ Panel {
   function previewSource(entry) {
     if (!entry) return ""
     var useImage = !root.store || root.store.showPreviews !== false
-    return useImage && entry.image.length > 0 ? entry.image : entry.appIcon
+    var image = Model.safeImageSource(entry.image)
+    return useImage && image.length > 0 ? image : entry.appIcon
   }
 
   function dayLabel(ts) {
@@ -221,7 +222,7 @@ Panel {
       root.selectedEntry = null
     root.store.deleteEntry(entry)
     // The cursor stays on the same index: the next entry slides into the
-    // deleted one's place, like a GNOME-style list.
+    // deleted one's place, like a standard list.
     root.clampCursor()
   }
 
@@ -566,6 +567,7 @@ Panel {
     if (value.length === 0) return ""
     if (value.indexOf("file://") === 0 || value.indexOf("image://") === 0) return value
     if (value.charAt(0) === "/") return Util.fileUrl(value)
+    if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(value)) return ""
     return Quickshell.iconPath(value, true)
   }
 
@@ -2733,8 +2735,8 @@ Panel {
                     Layout.leftMargin: Style.space(12)
                     Layout.rightMargin: Style.space(12)
                     Layout.topMargin: Style.space(2)
-                    visible: root.entry.image.length > 0 && status !== Image.Error
-                    source: root.entry.image
+                    visible: source.length > 0 && status !== Image.Error
+                    source: Model.safeImageSource(root.entry.image)
                     // Bound the decoded texture, not just the painted size: a
                     // full-resolution notification image otherwise lands in
                     // VRAM at its native dimensions.

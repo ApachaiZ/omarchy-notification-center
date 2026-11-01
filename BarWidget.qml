@@ -226,7 +226,7 @@ BarWidget {
     }
   }
 
-  // Unread count badge, GNOME-style dot with the number of unseen entries.
+  // Unread count badge with the number of unseen entries.
   Rectangle {
     id: badge
     anchors.top: button.top

@@ -209,7 +209,9 @@ Item {
 
   function normalizeArchiveEntry(value) {
     var entry = NotificationLogic.historyEntry(value, NotificationUrgency.Normal)
-    entry.stem = String((value && value.stem) || NotificationLogic.imageStem(entry))
+    // Recompute the stem from the numeric timestamp/id. Never trust a stem
+    // from the file: it is used in file paths and must not contain slashes.
+    entry.stem = NotificationLogic.imageStem(entry)
     entry.source = "history"
     return entry
   }
@@ -742,7 +744,9 @@ Item {
 
   Process {
     id: ensureDirsProc
-    command: ["mkdir", "-p", service.stateDir, service.popupStateDir, service.historyDir, service.imagesDir]
+    command: ["bash", "-c",
+      'mkdir -p "$1" "$2" "$3" "$4" && chmod 700 "$2" "$3" "$4"',
+      "--", service.stateDir, service.popupStateDir, service.historyDir, service.imagesDir]
     running: false
     onExited: service.startArchiveLoad()
   }

@@ -160,7 +160,7 @@ Item {
         execArgv: String(row.execArgv || ""),
         urgency: typeof row.urgency === "number" ? row.urgency : 1,
         timestamp: Number(row.timestamp || 0),
-        stem: String(row.timestamp || 0) + "-" + String(row.originalId || 0),
+        stem: Model.imageStem(row.timestamp, row.originalId),
         source: "live"
       })
     }

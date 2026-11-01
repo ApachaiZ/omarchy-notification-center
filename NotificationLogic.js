@@ -85,8 +85,38 @@ function stripImageTags(text) {
 // the input never contained. Measured against Qt 6.11.2 — the rewritten form
 // fetches, the original does not. So strip again after, and what Qt parses is what
 // was checked last.
+// Values that can be loaded without a network request. `image://` is the
+// in-process provider; `file://` and absolute paths are local. Any other
+// scheme (http, https, data, ...) is dropped: notification senders are
+// untrusted and the center must never fetch a remote image.
+function safeImageSource(value) {
+  var s = String(value || "")
+  if (!s) return ""
+  if (s.indexOf("file://") === 0 || s.indexOf("image://") === 0) return s
+  if (s.charAt(0) === "/") return s
+  return ""
+}
+
+// App icons may also be themed icon names (no scheme). Keep those, but drop
+// any other URI scheme so a notification cannot turn an icon into a request.
+function safeAppIcon(value) {
+  var s = String(value || "")
+  if (!s) return ""
+  if (s.indexOf("file://") === 0 || s.indexOf("image://") === 0) return s
+  if (s.charAt(0) === "/") return s
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(s)) return ""
+  return s
+}
+
+// Styled text for a body that has already been through sanitizeBody(). The
+// newline rewrite can split a tag and create a new <img>, so strip again
+// after it; reusing the sanitized string avoids a second sanitizeBody() pass.
+function styledSanitizedBody(text) {
+  return stripImageTags(String(text || "").replace(/\r\n|\r|\n/g, "<br/>"))
+}
+
 function styledBody(body, app, appIcon) {
-  return stripImageTags(sanitizeBody(body, app, appIcon).replace(/\r\n|\r|\n/g, "<br/>"))
+  return styledSanitizedBody(sanitizeBody(body, app, appIcon))
 }
 
 function sanitizeBody(body, app, appIcon) {
@@ -189,10 +219,10 @@ function snapshotOf(notification, timestamp) {
     id: id,
     originalId: id,
     app: n.appName || "",
-    appIcon: n.appIcon || "",
+    appIcon: safeAppIcon(n.appIcon || ""),
     summary: String(n.summary || ""),
     body: n.body || "",
-    image: n.image || "",
+    image: safeImageSource(n.image || ""),
     glyph: glyphFromHints(n.hints),
     execArgv: execArgvFromHints(n.hints),
     urgency: n.urgency,
@@ -240,10 +270,10 @@ function historyEntry(value, normalUrgency) {
     id: e.id || 0,
     originalId: e.originalId || e.id || 0,
     app: e.app || "",
-    appIcon: e.appIcon || "",
+    appIcon: safeAppIcon(e.appIcon || ""),
     summary: e.summary || "",
     body: e.body || "",
-    image: e.image || "",
+    image: safeImageSource(e.image || ""),
     glyph: e.glyph || "",
     execArgv: e.execArgv || "",
     urgency: typeof e.urgency === "number" ? e.urgency : normalUrgency,
@@ -311,7 +341,11 @@ var PERSISTED_IMAGE_ROLES = ["appIcon", "image"]
 
 function imageStem(entry) {
   var e = entry || {}
-  return String(e.timestamp || 0) + "-" + String(e.originalId || 0)
+  var timestamp = Number(e.timestamp || 0)
+  var originalId = Number(e.originalId || 0)
+  if (!isFinite(timestamp) || timestamp < 0) timestamp = 0
+  if (!isFinite(originalId) || originalId < 0) originalId = 0
+  return String(Math.trunc(timestamp)) + "-" + String(Math.trunc(originalId))
 }
 
 // The filesystem path behind a file-backed image value, or "" for anything
@@ -462,6 +496,9 @@ if (typeof module !== "undefined") {
   module.exports = {
     isChromiumDerived: isChromiumDerived,
     sanitizeBody: sanitizeBody,
+    safeImageSource: safeImageSource,
+    safeAppIcon: safeAppIcon,
+    styledSanitizedBody: styledSanitizedBody,
     styledBody: styledBody,
     summaryStartsWithGlyph: summaryStartsWithGlyph,
     shouldBypassDnd: shouldBypassDnd,

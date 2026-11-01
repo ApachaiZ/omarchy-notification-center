@@ -2,14 +2,15 @@
 
 ![Omarchy Notification Center — your notifications, your layout](preview.png)
 
-A GNOME-style notification daemon and center for
-[Omarchy](https://omarchy.org) Quattro. The plugin owns the notification server
+A notification daemon and center for [Omarchy](https://omarchy.org) Quattro. The plugin owns the notification server
 and its toasts, and adds somewhere to look back at them: a scrollable list of
 cards, a detail card per notification, 30 days of private history, search,
 dismiss one or all, an unread badge, Do Not Disturb, and a settings view for
 layout, spacing, monitor, and shortcuts.
 
 ![Notification list on an empty desktop](screenshots/center-list.jpg)
+
+All captures use synthetic notification content on an empty desktop.
 
 ## Features
 
@@ -41,7 +42,8 @@ layout, spacing, monitor, and shortcuts.
   the shortcut help, and a discreet hint bar lists the active commands. The
   bar can be hidden.
 - **Privacy** — hide notification bodies, disable and purge image previews, or
-  hide the unread badge.
+  hide the unread badge. Remote image URLs are dropped: a notification can
+  only load local files or the shell's in-process image provider.
 - **Keyboard control** — arrows or `h`/`j`/`k`/`l`, `Enter`, `Del`/`x`, `/`
   search, `d` Do Not Disturb, `Shift+C` clear, `g`/`G`, `?`, `Esc`, and
   the Settings key (default `s`). The search, DND, details, settings, and
@@ -191,10 +193,25 @@ runs inside the existing `omarchy-shell` process.
 
 The private archive lives at
 `${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/notifications-center/`; its
-entries are pruned to 30 days or 1000, and image copies live under `images/`. Clearing the center empties both the
-archive and the shell's history. Images referenced by archived notifications
-stay in the shell's own image directory, so they may disappear once the service
-rotates that storage.
+entries are pruned to 30 days or 1000, and image copies live under `images/`.
+Clearing the center empties both the archive and the shell's history. Images
+referenced by archived notifications stay in the shell's own image directory,
+so they may disappear once the service rotates that storage.
+
+Notification images are copied only from local files; remote URLs and other
+URI schemes are dropped, so displaying a notification never fetches the
+network. Bodies render as StyledText with `<img>` tags stripped before Qt
+parses them. The archive, history, and image directories are created with
+mode `0700`.
+
+## Development
+
+The pure helpers in `Model.js` and `NotificationLogic.js` are covered by Node's
+built-in test runner:
+
+```bash
+node --test tests/*.test.mjs
+```
 
 ## Remove
 

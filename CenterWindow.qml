@@ -137,7 +137,9 @@ PanelWindow {
   onOpenChanged: {
     if (!open) return
     Qt.callLater(function() {
-      if (root.open && root.focusTarget)
+      // The window can be destroyed before this callback runs (quick open →
+      // close); the id is then null, so guard before reading properties.
+      if (root && root.open && root.focusTarget)
         root.focusTarget.forceActiveFocus()
     })
   }

@@ -49,8 +49,40 @@ function stripImageTags(text) {
   return out
 }
 
+// Values that can be loaded without a network request. See
+// NotificationLogic.js in the shell's notification service: remote schemes are
+// dropped so an untrusted notification cannot turn an image into a request.
+function safeImageSource(value) {
+  var s = String(value || "")
+  if (!s) return ""
+  if (s.indexOf("file://") === 0 || s.indexOf("image://") === 0) return s
+  if (s.charAt(0) === "/") return s
+  return ""
+}
+
+function safeAppIcon(value) {
+  var s = String(value || "")
+  if (!s) return ""
+  if (s.indexOf("file://") === 0 || s.indexOf("image://") === 0) return s
+  if (s.charAt(0) === "/") return s
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(s)) return ""
+  return s
+}
+
+function imageStem(timestamp, originalId) {
+  var ts = Number(timestamp || 0)
+  var id = Number(originalId || 0)
+  if (!isFinite(ts) || ts < 0) ts = 0
+  if (!isFinite(id) || id < 0) id = 0
+  return String(Math.trunc(ts)) + "-" + String(Math.trunc(id))
+}
+
+function styledSanitizedBody(text) {
+  return stripImageTags(String(text || "").replace(/\r\n|\r|\n/g, "<br/>"))
+}
+
 function styledBody(body, app, appIcon) {
-  return stripImageTags(sanitizeBody(body, app, appIcon).replace(/\r\n|\r|\n/g, "<br/>"))
+  return styledSanitizedBody(sanitizeBody(body, app, appIcon))
 }
 
 function sanitizeBody(body, app, appIcon) {
@@ -79,15 +111,15 @@ function parseEntries(raw, source) {
         id: Number(v.id || 0),
         originalId: originalId,
         app: String(v.app || ""),
-        appIcon: String(v.appIcon || ""),
+        appIcon: safeAppIcon(v.appIcon || ""),
         summary: String(v.summary || ""),
         body: String(v.body || ""),
-        image: String(v.image || ""),
+        image: safeImageSource(v.image || ""),
         glyph: String(v.glyph || ""),
         execArgv: String(v.execArgv || ""),
         urgency: typeof v.urgency === "number" ? v.urgency : 1,
         timestamp: timestamp,
-        stem: String(timestamp) + "-" + String(originalId),
+        stem: imageStem(timestamp, originalId),
         source: source
       })
     } catch (e) {
@@ -228,5 +260,29 @@ function emptyEntry() {
     id: 0, originalId: 0, app: "", appIcon: "", summary: "", body: "",
     image: "", glyph: "", execArgv: "", urgency: 1, timestamp: 0,
     stem: "", source: "history"
+  }
+}
+
+// Node test hook. QML's JS engine has no `module`, so this block is inert in
+// the running plugin; it lets the pure helpers be unit-tested with node --test.
+if (typeof module !== "undefined") {
+  module.exports = {
+    isChromiumDerived: isChromiumDerived,
+    isImageTag: isImageTag,
+    stripImageTags: stripImageTags,
+    sanitizeBody: sanitizeBody,
+    safeImageSource: safeImageSource,
+    safeAppIcon: safeAppIcon,
+    imageStem: imageStem,
+    styledSanitizedBody: styledSanitizedBody,
+    styledBody: styledBody,
+    parseEntries: parseEntries,
+    mergeEntries: mergeEntries,
+    signature: signature,
+    hash: hash,
+    parseSettings: parseSettings,
+    parseCenterState: parseCenterState,
+    timeAgo: timeAgo,
+    emptyEntry: emptyEntry
   }
 }
