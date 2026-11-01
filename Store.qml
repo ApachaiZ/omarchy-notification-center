@@ -76,6 +76,11 @@ Item {
   property var archiveEntries: []
   property var entries: []
   property string mergeSignature: ""
+  // Raw file snapshots: a directory watch or a fallback poll often re-reads
+  // unchanged files. Skip parsing and hashing when the bytes did not change.
+  property string lastLiveRaw: ""
+  property string lastHistoryRaw: ""
+  property string lastArchiveRaw: ""
 
   // ---- action queue (one serialized Process for all mutating actions) ----
   property var actionQueue: []
@@ -108,16 +113,22 @@ Item {
   }
 
   function onLiveRead(raw) {
+    if (raw === store.lastLiveRaw) return
+    store.lastLiveRaw = raw
     store.liveEntries = store.filterSuppressed(Model.parseEntries(raw, "live"))
     store.rebuildEntries()
   }
 
   function onHistoryRead(raw) {
+    if (raw === store.lastHistoryRaw) return
+    store.lastHistoryRaw = raw
     store.historyEntries = store.filterSuppressed(Model.parseEntries(raw, "history"))
     store.rebuildArchive()
   }
 
   function onArchiveLoaded(raw) {
+    if (raw === store.lastArchiveRaw) return
+    store.lastArchiveRaw = raw
     store.archiveFileEntries = store.filterSuppressed(Model.parseArchive(raw))
     store.rebuildArchive()
   }

@@ -107,7 +107,7 @@ function parseEntries(raw, source) {
       if (!v || typeof v !== "object") continue
       var originalId = Number(v.originalId || v.id || 0)
       var timestamp = Number(v.timestamp || 0)
-      entries.push({
+      var row = {
         id: Number(v.id || 0),
         originalId: originalId,
         app: String(v.app || ""),
@@ -121,7 +121,9 @@ function parseEntries(raw, source) {
         timestamp: timestamp,
         stem: imageStem(timestamp, originalId),
         source: source
-      })
+      }
+      row.sig = contentSignature(row)
+      entries.push(row)
     } catch (e) {
       // Torn write from a crash mid-save — skip the line, keep the rest.
     }
@@ -164,16 +166,23 @@ function mergeEntries(live, history) {
   return out
 }
 
-// Cheap change detector: a rebuild only happens when something the list
-// draws actually changed.
+// Hash only once per parsed row. The store reuses these entries across
+// rebuilds, so the change detector becomes a cheap join instead of re-hashing
+// every body on every notification.
+function contentSignature(e) {
+  var v = e || {}
+  var body = String(v.summary) + "\u0001" + String(v.body) + "\u0001" +
+             String(v.image) + "\u0001" + String(v.glyph) + "\u0001" +
+             String(v.appIcon) + "\u0001" + String(v.app) + "\u0001" + v.urgency
+  return hash(body)
+}
+
 function signature(entries) {
   var parts = []
   for (var i = 0; i < entries.length; i++) {
     var e = entries[i]
-    var body = String(e.summary) + "\u0001" + String(e.body) + "\u0001" +
-               String(e.image) + "\u0001" + String(e.glyph) + "\u0001" +
-               String(e.appIcon) + "\u0001" + String(e.app) + "\u0001" + e.urgency
-    parts.push(e.stem + ":" + hash(body))
+    var sig = e.sig !== undefined ? e.sig : contentSignature(e)
+    parts.push(e.stem + ":" + sig)
   }
   return parts.join(",")
 }

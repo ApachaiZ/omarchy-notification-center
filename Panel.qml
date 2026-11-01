@@ -41,6 +41,9 @@ Panel {
   // keyboard share one selection like the bluetooth panel does.
   property int cursorIndex: -1
   property string query: ""
+  // Render the newest page instead of instantiating the whole archive. The
+  // footer and G extend it; search still spans the full history.
+  property int renderLimit: 150
   property bool searchOpen: false
   property bool clearArmed: false
   property bool helpOpen: false
@@ -100,7 +103,7 @@ Panel {
 
 
   // Filtered view used by the list, the cursor and every keyboard action.
-  readonly property var visibleEntries: {
+  readonly property var matchedEntries: {
     var q = root.query.trim().toLowerCase()
     if (q === "") return root.entries
     var out = []
@@ -110,6 +113,16 @@ Panel {
       if (hay.indexOf(q) !== -1) out.push(e)
     }
     return out
+  }
+
+  readonly property var visibleEntries: {
+    var limit = Math.max(1, root.renderLimit)
+    return root.matchedEntries.length > limit
+      ? root.matchedEntries.slice(0, limit) : root.matchedEntries
+  }
+
+  function showOlder() {
+    root.renderLimit = Math.min(root.matchedEntries.length, root.renderLimit + 150)
   }
 
   function previewSource(entry) {
@@ -2371,7 +2384,11 @@ Panel {
           else if (t === root.store.searchKey) root.openSearch()
           else if (t === root.store.settingsKey) root.openSettings()
           else if (t === "g") { root.cursorIndex = root.visibleEntries.length > 0 ? 0 : -1; contentRoot.scrollCursorIntoView() }
-          else if (t === "G") { root.cursorIndex = root.visibleEntries.length - 1; contentRoot.scrollCursorIntoView() }
+          else if (t === "G") {
+            root.renderLimit = Math.max(root.renderLimit, root.matchedEntries.length)
+            root.cursorIndex = Math.max(0, root.matchedEntries.length - 1)
+            contentRoot.scrollCursorIntoView()
+          }
           else if (t === "C") root.handleClearShortcut()
         }
 
@@ -2548,7 +2565,7 @@ Panel {
                 Text { Layout.fillWidth: true; text: "Show or hide this help"; color: root.fg; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
 
                 Text { text: "g / G"; color: Commons.Color.accent; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-                Text { Layout.fillWidth: true; text: "First / last notification"; color: root.fg; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+                Text { Layout.fillWidth: true; text: "First / last notification (G loads older)"; color: root.fg; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
 
                 Text { text: "Shift+C"; color: Commons.Color.accent; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
                 Text { Layout.fillWidth: true; text: "Clear all (twice unless disabled)"; color: root.fg; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
@@ -2630,6 +2647,18 @@ Panel {
                 }
               }
 
+              Button {
+                visible: !root.horizontal && root.matchedEntries.length > root.visibleEntries.length
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: "Show older (" + (root.matchedEntries.length - root.visibleEntries.length) + ")"
+                focusable: true
+                bordered: true
+                fontSize: Style.font.bodySmall
+                fontFamily: root.fontFamily
+                foreground: root.fg
+                onClicked: root.showOlder()
+              }
+
               // Side-by-side cards for the horizontal band.
               Item {
                 width: parent.width
@@ -2662,6 +2691,17 @@ Panel {
                         rowIndex: index
                         cursorActive: root.cursorIndex === index
                       }
+                    }
+
+                    Button {
+                      visible: root.matchedEntries.length > root.visibleEntries.length
+                      text: "More…"
+                      focusable: true
+                      bordered: true
+                      fontSize: Style.font.bodySmall
+                      fontFamily: root.fontFamily
+                      foreground: root.fg
+                      onClicked: root.showOlder()
                     }
                   }
                 }
