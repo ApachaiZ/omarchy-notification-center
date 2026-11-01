@@ -23,6 +23,7 @@ Item {
   readonly property string archivePath: home + "/.local/state/omarchy/notifications-archive.json"
   readonly property string historyDir: stateDir + "/history"
   readonly property string engineRepoUrl: "https://github.com/ApachaiZ/omarchy-notification-engine"
+  readonly property string engineDir: home + "/.config/omarchy/plugins/apach.notification-engine"
 
   property bool dnd: false
   property double lastSeen: 0
@@ -455,7 +456,15 @@ Item {
     }
     store.engineInstallArmed = false
     engineArmTimer.stop()
-    store.enqueueAction(["omarchy", "plugin", "add", store.engineRepoUrl, "--enable", "--yes"])
+    // If the engine is already installed but disabled, enable it; otherwise
+    // install it from its repository. Passing paths/URLs as arguments keeps
+    // the script free of shell interpolation.
+    store.enqueueAction(["bash", "-c",
+      'if [[ -d "$1" ]]; then\n' +
+      '  omarchy plugin enable apach.notification-engine\n' +
+      'else\n' +
+      '  omarchy plugin add "$2" --enable --yes\n' +
+      'fi', "--", store.engineDir, store.engineRepoUrl])
   }
 
   Timer {
