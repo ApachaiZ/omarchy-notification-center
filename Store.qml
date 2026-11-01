@@ -597,12 +597,24 @@ Item {
     if (!entry || !entry.stem) return
     var stem = String(entry.stem)
     store.suppress(stem, 3000)
+    // The engine's `forget` IPC removes an archive entry. The stock service
+    // ignores it and only knows its per-file history, so with the engine
+    // disabled the center must also remove the entry from the engine archive
+    // it is displaying. Do that directly only when shell.json is loaded and
+    // the engine is off, so it can never race a live engine writer.
+    var direct = store.shellConfigLoaded && !store.engineEnabled
     store.enqueueAction(["bash", "-c",
       "omarchy-shell -q notifications dismiss \"$2\" || true\n" +
       "omarchy-shell -q notifications forget \"$3\" >/dev/null 2>&1 || true\n" +
       "sleep 0.3\n" +
-      "rm -f \"$1/$3.json\" \"$1/history/$3.json\" \"$1/images/$3\"-*",
-      "--", store.stateDir, String(entry.summary || ""), stem])
+      "rm -f \"$1/$3.json\" \"$1/history/$3.json\" \"$1/images/$3\"-*\n" +
+      "if [[ \"$4\" == \"direct\" && -f \"$5\" ]] && command -v jq >/dev/null 2>&1; then\n" +
+      "  umask 077\n" +
+      "  tmp=\"$5.tmp\"\n" +
+      "  jq --arg stem \"$3\" 'if (.entries|type)==\"array\" then .entries |= map(select(.stem != $stem)) else . end' \"$5\" > \"$tmp\" && chmod 600 \"$tmp\" && mv -f \"$tmp\" \"$5\" || rm -f \"$tmp\"\n" +
+      "fi",
+      "--", store.stateDir, String(entry.summary || ""), stem,
+      direct ? "direct" : "ipc", store.archivePath])
     store.removeLocal(stem)
   }
 
@@ -616,10 +628,19 @@ Item {
   // Dismiss every on-screen toast, then wipe the unified archive.
   function clearAll() {
     for (var i = 0; i < store.entries.length; i++) store.suppress(store.entries[i].stem, 3500)
+    var direct = store.shellConfigLoaded && !store.engineEnabled
     store.enqueueAction(["bash", "-c",
       'omarchy-shell -q notifications dismissAll || true\n' +
       'omarchy-shell -q notifications clear || true\n' +
-      'rm -rf -- "$1"', "--", store.legacyDir])
+      'rm -rf -- "$1"\n' +
+      'if [[ "$2" == "direct" && -f "$3" ]] && command -v jq >/dev/null 2>&1; then\n' +
+      '  umask 077\n' +
+      '  tmp="$3.tmp"\n' +
+      '  jq \'if (.entries|type)=="array" then .entries = [] else . end\' "$3" > "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$3" || rm -f "$tmp"\n' +
+      'fi\n' +
+      '[[ "$2" == "direct" ]] && rm -f "$4"/*',
+      "--", store.legacyDir, direct ? "direct" : "ipc", store.archivePath,
+      store.stateDir + "/images"])
     store.liveEntries = []
     store.archiveEntries = []
     store.entries = []
