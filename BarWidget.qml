@@ -22,7 +22,6 @@ BarWidget {
   readonly property var hostWindow: QsWindow.window
   readonly property string hostScreenName: hostWindow && hostWindow.screen
     ? String(hostWindow.screen.name || "") : ""
-
   readonly property var store: storeLoader.item
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
   readonly property bool dnd: store ? store.dnd === true : false
@@ -149,24 +148,6 @@ BarWidget {
       root.pendingAction = ""
       if (action !== "" && panelLoader.item)
         panelLoader.item[action]()
-    }
-  }
-
-  IpcHandler {
-    target: "apach.notifications"
-
-    function open(): void { root.open() }
-    function close(): void { root.close() }
-    function show(): void { root.open() }
-    function hide(): void { root.close() }
-    function toggle(): void { root.toggle() }
-    function settings(): void {
-      if (panelLoader.item) {
-        panelLoader.item.openSettings()
-        return
-      }
-      root.pendingAction = "openSettings"
-      root.panelActive = true
     }
   }
 
