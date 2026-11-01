@@ -327,6 +327,7 @@ Panel {
   function moveSettingsCursor(dy) {
     if (dy === 0) return
     root.settingsCursor = (root.settingsCursor + dy + root.settingsRowCount) % root.settingsRowCount
+    if (root.activeContent) root.activeContent.scrollSettingsCursorIntoView()
   }
 
   function cyclePlacement(delta) {
@@ -2396,6 +2397,36 @@ Panel {
         // Small safety margin for the card border, which is not exposed here.
         return Math.max(Style.space(140),
           root.windowAvailableH - pad * 2 - Style.space(6) - footer - chrome)
+      }
+
+      // Walk the settings tree to the highlighted CursorRow. The rows are
+      // nested inside section Columns, and the cursor can move past the card
+      // when the settings list is taller than the screen.
+      function activeSettingsRow(item) {
+        var children = item ? item.children : null
+        if (!children) return null
+        for (var i = 0; i < children.length; i++) {
+          var child = children[i]
+          if (!child) continue
+          if (child.active === true) return child
+          var nested = root.activeContent ? root.activeContent.activeSettingsRow(child) : null
+          if (nested) return nested
+        }
+        return null
+      }
+
+      function scrollSettingsCursorIntoView() {
+        if (!root.settingsOpen) return
+        var row = contentRoot.activeSettingsRow(settingsColumn)
+        if (!row) return
+        var margin = Style.space(16)
+        var y = row.mapToItem(contentColumn, 0, 0).y
+        var top = scrollView.contentY + margin
+        var bottom = scrollView.contentY + scrollView.height - margin
+        if (y >= top && y + row.height <= bottom) return
+        var maxY = Math.max(0, scrollView.contentHeight - scrollView.height)
+        if (y < top) scrollView.contentY = Math.max(0, y - margin)
+        else scrollView.contentY = Math.min(maxY, y + row.height - scrollView.height + margin)
       }
 
       function resetListScroll() {
