@@ -773,11 +773,19 @@ Item {
   // for it, and no amount of later traffic can push it back.
   property var popupFileQueue: []
 
-  // Done callback of the job popupFileProc is currently running.
+  // Done callback and private stdin payload of the job popupFileProc is
+  // currently running.
   property var runningPopupFileJobDone: null
+  property string runningPopupFileInput: ""
 
-  function enqueuePopupFileJob(command, done) {
-    popupFileQueue = popupFileQueue.concat([{ command: command, done: done || null }])
+  function enqueuePopupFileJob(command, done, stdin) {
+    popupFileQueue = popupFileQueue.concat([{
+      command: command,
+      done: done || null,
+      // Private notification JSON travels on stdin, never in argv: another
+      // local user can read /proc/<pid>/cmdline while the job runs.
+      stdin: String(stdin || "")
+    }])
     runNextPopupFileJob()
   }
 
@@ -800,12 +808,20 @@ Item {
 
     popupFileProc.command = job.command
     service.runningPopupFileJobDone = job.done || null
+    service.runningPopupFileInput = job.stdin || ""
     popupFileProc.running = true
   }
 
   Process {
     id: popupFileProc
     running: false
+    stdinEnabled: true
+    onStarted: {
+      if (service.runningPopupFileInput !== "") {
+        write(service.runningPopupFileInput + "\n")
+        service.runningPopupFileInput = ""
+      }
+    }
     onExited: {
       var done = service.runningPopupFileJobDone
       service.runningPopupFileJobDone = null
@@ -832,25 +848,27 @@ Item {
     "done\n"
 
   function persistPopupFile(snapshot) {
-    // The JSON travels as an argument, not through shell interpolation, so
-    // summaries/bodies with quotes or backticks can't break the command. The
-    // mkdir guards notifications that arrive before ensureDirsProc has run.
-    // Copies run before the JSON referencing them, while the source exists.
+    // The JSON travels on stdin, never in argv, so private summaries and
+    // bodies cannot be read from /proc/<pid>/cmdline by another local user.
+    // The mkdir guards notifications that arrive before ensureDirsProc has
+    // run; copies run before the JSON referencing them, while the source
+    // exists.
     var persistable = NotificationLogic.persistablePopup(snapshot, imagesDir)
     service.persistedEntries[NotificationLogic.imageStem(snapshot)] = persistable.entry
     var command = ["bash", "-c",
       "mkdir -p \"$1\" \"$2\" || exit 0\n" +
-      "dir=\"$1\" json=\"$3\" name=\"$4\"\n" +
-      "shift 4\n" +
+      "dir=\"$1\" name=\"$3\"\n" +
+      "shift 3\n" +
       copyImagesScript +
+      "IFS= read -r json || exit 0\n" +
       "printf '%s\\n' \"$json\" > \"$dir/$name\"", "--",
       popupStateDir,
       imagesDir,
-      NotificationLogic.serializePopup(persistable.entry, NotificationUrgency.Normal),
       NotificationLogic.popupFileName(snapshot)]
     for (var i = 0; i < persistable.copies.length; i++)
       command.push(persistable.copies[i].from, persistable.copies[i].to)
-    enqueuePopupFileJob(command)
+    enqueuePopupFileJob(command, null,
+      NotificationLogic.serializePopup(persistable.entry, NotificationUrgency.Normal))
   }
 
   function deletePopupFileFor(row) {
