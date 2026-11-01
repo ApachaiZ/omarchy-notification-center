@@ -58,6 +58,10 @@ Item {
   property bool showPreviews: true
   property bool showBadge: true
   property bool captureToasts: true
+  // Engine execution/DND policy. Both default on for compatibility; app names
+  // are sender-chosen, so these are the user's only control over spoofing.
+  property bool allowExecActions: true
+  property bool dndBypass: true
   property string searchKey: "/"
   property string dndKey: "d"
   property string detailKey: "i"
@@ -221,6 +225,8 @@ Item {
     store.showPreviews = parsed.showPreviews
     store.showBadge = parsed.showBadge
     store.captureToasts = parsed.captureToasts !== false
+    store.allowExecActions = parsed.allowExecActions !== false
+    store.dndBypass = parsed.dndBypass !== false
     store.searchKey = parsed.searchKey
     store.dndKey = parsed.dndKey
     store.detailKey = parsed.detailKey
@@ -302,6 +308,8 @@ Item {
       showPreviews: store.showPreviews,
       showBadge: store.showBadge,
       captureToasts: store.captureToasts,
+      allowExecActions: store.allowExecActions,
+      dndBypass: store.dndBypass,
       searchKey: store.searchKey,
       dndKey: store.dndKey,
       detailKey: store.detailKey,
@@ -447,6 +455,20 @@ Item {
     var next = !!value
     if (store.showBadge === next) return
     store.showBadge = next
+    store.scheduleCenterStateSave()
+  }
+
+  function setAllowExecActions(value) {
+    var next = !!value
+    if (store.allowExecActions === next) return
+    store.allowExecActions = next
+    store.scheduleCenterStateSave()
+  }
+
+  function setDndBypass(value) {
+    var next = !!value
+    if (store.dndBypass === next) return
+    store.dndBypass = next
     store.scheduleCenterStateSave()
   }
 

@@ -77,3 +77,13 @@ test("oversized persisted rows are clipped when parsed", () => {
   assert.equal(row.glyph.length, Model.limits.glyph)
   assert.equal(Model.clipText("a\u0000b", 10), "ab")
 })
+
+test("engine action and DND policies default on and can be turned off", () => {
+  assert.equal(Model.parseCenterState("").allowExecActions, true)
+  assert.equal(Model.parseCenterState("").dndBypass, true)
+  assert.equal(Model.parseCenterState("{}").allowExecActions, true)
+  assert.equal(Model.parseCenterState("{}").dndBypass, true)
+  assert.equal(Model.parseCenterState(JSON.stringify({ allowExecActions: false })).allowExecActions, false)
+  assert.equal(Model.parseCenterState(JSON.stringify({ dndBypass: false })).dndBypass, false)
+  assert.equal(Model.parseCenterState(JSON.stringify({ allowExecActions: true })).allowExecActions, true)
+})

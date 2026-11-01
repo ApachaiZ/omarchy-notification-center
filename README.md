@@ -157,7 +157,10 @@ default; `Shift+P` is selectable) opens the settings view:
   purges archived image copies), show/hide the unread badge, and **Capture
   toasts** On/Off. Capture only applies to the engine; with the stock service
   it is ignored. The **Notification engine** section offers the optional
-  engine installation with its replacement warning.
+  engine installation with its replacement warning, plus **Actions** and
+  **DND bypass** switches. Both are on by default; app names are chosen by
+  senders, so turning them off is the reliable way to refuse spoofed actions
+  or a spoofed bypass of Do Not Disturb.
 - **Shortcuts** — choose what `Enter` opens (app or details), show/hide the
   hint bar, and pick the Search (`/` or `Ctrl+F`), DND (`d`/`D`), Details
   (`i`/`I`), Settings (`s`/`Shift+P`), and Help (`?`/`F1`) keys.

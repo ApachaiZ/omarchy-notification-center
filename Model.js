@@ -224,7 +224,8 @@ function parseCenterState(raw) {
   var fallback = {
     lastSeen: 0, placement: "top-right", mode: "window",
     marginX: 12, marginY: 12, padding: 12, cardSpacing: 10, confirmClear: true,
-    screens: [], screensLegacy: false, captureToasts: true
+    screens: [], screensLegacy: false, captureToasts: true,
+    allowExecActions: true, dndBypass: true
   }
   function clampInt(value, fallbackValue, min, max) {
     var n = Number(value)
@@ -267,6 +268,8 @@ function parseCenterState(raw) {
       cardSpacing: clampInt(parsed && parsed.cardSpacing, 10, 2, 24),
       confirmClear: confirmClear,
       captureToasts: !(parsed && parsed.captureToasts === false),
+      allowExecActions: !(parsed && parsed.allowExecActions === false),
+      dndBypass: !(parsed && parsed.dndBypass === false),
       enterOpens: (parsed && parsed.enterOpens === "detail") ? "detail" : "app",
       shortcutBar: !(parsed && parsed.shortcutBar === false),
       hideBodies: !!(parsed && parsed.hideBodies === true),

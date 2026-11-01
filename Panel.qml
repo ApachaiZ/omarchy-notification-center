@@ -46,7 +46,7 @@ Panel {
   property bool helpOpen: false
   property int settingsCursor: 0
   property int screenCursor: 0
-  readonly property int settingsRowCount: 23
+  readonly property int settingsRowCount: 25
   readonly property var screenList: Quickshell.screens
   readonly property var centerScreens: {
     var screens = Quickshell.screens
@@ -398,6 +398,8 @@ Panel {
     case 20: root.store.setHelpKey(root.store.helpKey === "F1" ? "?" : "F1"); break
     case 21: root.store.setSettingsKey(root.store.settingsKey === "P" ? "s" : "P"); break
     case 22: root.store.installEngine(); break
+    case 23: root.store.setAllowExecActions(!root.store.allowExecActions); break
+    case 24: root.store.setDndBypass(!root.store.dndBypass); break
     }
   }
 
@@ -1878,6 +1880,88 @@ Panel {
         }
       }
 
+      CursorRow {
+        active: root.settingsCursor === 23
+
+        Row {
+          anchors.centerIn: parent
+          spacing: Style.space(6)
+
+          Text {
+            text: "Actions"
+            width: Style.space(100)
+            color: root.fg
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          Button {
+            text: "Run"
+            Layout.preferredWidth: Style.space(64)
+            focusable: true
+            selected: root.store !== null && root.store.allowExecActions
+            bordered: true
+            fontSize: Style.font.bodySmall
+            fontFamily: root.fontFamily
+            foreground: root.fg
+            onClicked: if (root.store) root.store.setAllowExecActions(true)
+          }
+
+          Button {
+            text: "Block"
+            Layout.preferredWidth: Style.space(64)
+            focusable: true
+            selected: root.store !== null && !root.store.allowExecActions
+            bordered: true
+            fontSize: Style.font.bodySmall
+            fontFamily: root.fontFamily
+            foreground: root.fg
+            onClicked: if (root.store) root.store.setAllowExecActions(false)
+          }
+        }
+      }
+
+      CursorRow {
+        active: root.settingsCursor === 24
+
+        Row {
+          anchors.centerIn: parent
+          spacing: Style.space(6)
+
+          Text {
+            text: "DND bypass"
+            width: Style.space(100)
+            color: root.fg
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          Button {
+            text: "Allow"
+            Layout.preferredWidth: Style.space(64)
+            focusable: true
+            selected: root.store !== null && root.store.dndBypass
+            bordered: true
+            fontSize: Style.font.bodySmall
+            fontFamily: root.fontFamily
+            foreground: root.fg
+            onClicked: if (root.store) root.store.setDndBypass(true)
+          }
+
+          Button {
+            text: "Block"
+            Layout.preferredWidth: Style.space(64)
+            focusable: true
+            selected: root.store !== null && !root.store.dndBypass
+            bordered: true
+            fontSize: Style.font.bodySmall
+            fontFamily: root.fontFamily
+            foreground: root.fg
+            onClicked: if (root.store) root.store.setDndBypass(false)
+          }
+        }
+      }
+
       Text {
         width: parent.width
         leftPadding: Style.space(8)
@@ -1885,6 +1969,18 @@ Panel {
         text: "The center works without an engine and reads omarchy.notifications history. Installing the engine replaces omarchy.notifications and disables it; the center stays installed."
         color: root.fg
         opacity: 0.7
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        wrapMode: Text.WordWrap
+      }
+
+      Text {
+        width: parent.width
+        leftPadding: Style.space(8)
+        rightPadding: Style.space(8)
+        text: "Actions run only after a click, as an argv vector rather than a shell string. DND bypass covers Omarchy confirmation toasts. App names are chosen by senders, so a local app can impersonate them: block either to refuse all such requests."
+        color: root.fg
+        opacity: 0.65
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
         wrapMode: Text.WordWrap
