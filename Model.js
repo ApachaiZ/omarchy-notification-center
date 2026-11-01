@@ -300,6 +300,29 @@ function timeAgo(ts, now) {
   return date.getDate() + " " + ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][date.getMonth()]
 }
 
+// Whether the optional engine is enabled according to shell.json. The engine
+// is a service, so it is enabled when its id appears in plugins[] and is not
+// listed in disabledPlugins[]. This is deliberately independent of whether the
+// plugin directory exists: an installed-but-disabled engine must not keep the
+// pre-3.0 data alive, because it will never run its migration.
+function engineEnabledFromShellConfig(raw, engineId) {
+  var id = String(engineId || "")
+  if (id === "") return false
+  try {
+    var config = JSON.parse(String(raw || "{}"))
+    var disabled = config && Array.isArray(config.disabledPlugins) ? config.disabledPlugins : []
+    if (disabled.indexOf(id) !== -1) return false
+    var plugins = config && Array.isArray(config.plugins) ? config.plugins : []
+    for (var i = 0; i < plugins.length; i++) {
+      var entry = plugins[i]
+      var entryId = entry && typeof entry === "object" ? String(entry.id || "") : String(entry || "")
+      if (entryId === id) return true
+    }
+  } catch (e) {
+  }
+  return false
+}
+
 // Null-safe stand-in so detail-view bindings can read entry fields even when
 // no notification is selected.
 function emptyEntry() {
@@ -321,6 +344,7 @@ if (typeof module !== "undefined") {
     safeImageSource: safeImageSource,
     safeAppIcon: safeAppIcon,
     imageStem: imageStem,
+    engineEnabledFromShellConfig: engineEnabledFromShellConfig,
     styledSanitizedBody: styledSanitizedBody,
     styledBody: styledBody,
     parseEntries: parseEntries,

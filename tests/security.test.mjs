@@ -87,3 +87,16 @@ test("engine action and DND policies default on and can be turned off", () => {
   assert.equal(Model.parseCenterState(JSON.stringify({ dndBypass: false })).dndBypass, false)
   assert.equal(Model.parseCenterState(JSON.stringify({ allowExecActions: true })).allowExecActions, true)
 })
+
+test("legacy cleanup follows the engine enabled state, not its directory", () => {
+  const engine = "apach.notification-engine"
+  const enabled = JSON.stringify({ plugins: [{ id: engine }] })
+  const disabled = JSON.stringify({ plugins: [{ id: engine }], disabledPlugins: [engine] })
+  assert.equal(Model.engineEnabledFromShellConfig(enabled, engine), true)
+  assert.equal(Model.engineEnabledFromShellConfig(JSON.stringify({ plugins: [engine] }), engine), true)
+  assert.equal(Model.engineEnabledFromShellConfig(JSON.stringify({ plugins: [] }), engine), false)
+  assert.equal(Model.engineEnabledFromShellConfig(disabled, engine), false)
+  assert.equal(Model.engineEnabledFromShellConfig(JSON.stringify({ disabledPlugins: [engine] }), engine), false)
+  assert.equal(Model.engineEnabledFromShellConfig("not json", engine), false)
+  assert.equal(Model.engineEnabledFromShellConfig(enabled, "other.plugin"), false)
+})

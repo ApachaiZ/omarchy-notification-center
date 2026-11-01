@@ -24,9 +24,12 @@ Item {
   readonly property string historyDir: stateDir + "/history"
   readonly property string engineRepoUrl: "https://github.com/ApachaiZ/omarchy-notification-engine"
   readonly property string engineDir: home + "/.config/omarchy/plugins/apach.notification-engine"
+  readonly property string engineId: "apach.notification-engine"
   // Private archive written by the pre-3.0 monolithic plugin. v3 never reads
-  // it; it is removed on upgrade unless the engine is installed and can merge
-  // it first.
+  // it; it is removed on upgrade unless the engine is enabled and can merge
+  // it first. An installed-but-disabled engine must not keep it alive: it will
+  // never run its migration, so the stock service would leave the data past
+  // its retention.
   readonly property string legacyDir: home + "/.local/state/omarchy/notifications-center"
 
   property bool dnd: false
@@ -113,12 +116,15 @@ Item {
   }
 
   property bool legacyCleanupStarted: false
+  property bool engineEnabled: false
 
   // The v3 center keeps no private archive. With the stock service the old
   // v1.6 archive would otherwise sit on disk forever, past its retention and
-  // after "Clear all". The engine owns the migration path when it is
-  // installed, so leave the data for it in that case.
+  // after "Clear all". The engine owns the migration path only when it is
+  // enabled; an installed-but-disabled engine will never run it. Wait for
+  // shell.json so the decision is based on configuration, not on a directory.
   function cleanupLegacyArchive() {
+    if (!store.shellConfigLoaded) return
     if (store.legacyCleanupStarted) return
     store.legacyCleanupStarted = true
     legacyCleanupProc.running = true
@@ -260,36 +266,39 @@ Item {
   // ---- bar placement (read-only view of shell.json) ----
 
   function parseShellConfig(raw) {
+    var config
+    try {
+      config = JSON.parse(String(raw || "{}"))
+    } catch (e) {
+      return
+    }
     store.shellConfigLoaded = true
+    store.engineEnabled = Model.engineEnabledFromShellConfig(raw, store.engineId)
+    store.cleanupLegacyArchive()
     var sections = ["left", "center", "right"]
     var sizes = ({})
     var found = ""
     var index = -1
-    try {
-      var config = JSON.parse(String(raw || "{}"))
-      store.primaryScreenName = String(config && config.bar && config.bar.primaryScreen || "")
-      if (store.screensDefaulted) {
-        var defaultScreen = store.defaultScreenName()
-        store.screenNames = defaultScreen !== "" ? [defaultScreen] : []
-        store.screensDefaulted = false
-        store.scheduleCenterStateSave()
-      }
-      var layout = (config && config.bar && config.bar.layout) || ({})
-      for (var s = 0; s < sections.length; s++) {
-        var list = layout[sections[s]]
-        if (!Array.isArray(list)) list = []
-        sizes[sections[s]] = list.length
-        for (var i = 0; i < list.length; i++) {
-          var entry = list[i]
-          var id = entry && typeof entry === "object" ? String(entry.id || "") : String(entry || "")
-          if (id === "apach.notifications") {
-            found = sections[s]
-            index = i
-          }
+    store.primaryScreenName = String(config && config.bar && config.bar.primaryScreen || "")
+    if (store.screensDefaulted) {
+      var defaultScreen = store.defaultScreenName()
+      store.screenNames = defaultScreen !== "" ? [defaultScreen] : []
+      store.screensDefaulted = false
+      store.scheduleCenterStateSave()
+    }
+    var layout = (config && config.bar && config.bar.layout) || ({})
+    for (var s = 0; s < sections.length; s++) {
+      var list = layout[sections[s]]
+      if (!Array.isArray(list)) list = []
+      sizes[sections[s]] = list.length
+      for (var i = 0; i < list.length; i++) {
+        var entry = list[i]
+        var id = entry && typeof entry === "object" ? String(entry.id || "") : String(entry || "")
+        if (id === "apach.notifications") {
+          found = sections[s]
+          index = i
         }
       }
-    } catch (e) {
-      return
     }
     store.barSizes = sizes
     store.barSection = found
@@ -648,8 +657,8 @@ Item {
   Process {
     id: legacyCleanupProc
     command: ["bash", "-c",
-      '[[ -d "$2" ]] || exit 0\n[[ -d "$1" ]] && exit 0\nrm -rf -- "$2"',
-      "--", store.engineDir, store.legacyDir]
+      '[[ -d "$2" ]] || exit 0\n[[ "$1" == "enabled" ]] && exit 0\nrm -rf -- "$2"',
+      "--", store.engineEnabled ? "enabled" : "disabled", store.legacyDir]
     running: false
   }
 
