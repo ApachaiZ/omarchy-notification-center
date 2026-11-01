@@ -54,7 +54,9 @@ All captures use synthetic notification content on an empty desktop.
   bar can be hidden.
 - **Privacy** — hide notification bodies, disable and purge image previews, or
   hide the unread badge. The center and engine drop remote image URLs; with the
-  stock service, its own toasts keep the stock service's behavior.
+  stock service, its own toasts keep the stock service's behavior. Every text
+  element is rendered as plain text, except notification bodies, which use
+  styled text only after `<img>` tags have been stripped.
 - **Keyboard control** — arrows or `h`/`j`/`k`/`l`, `Enter`, `Del`/`x`, `/`
   search, `d` Do Not Disturb, `Shift+C` clear, `g`/`G`, `?`, `Esc`, and
   the Settings key (default `s`). The search, DND, details, settings, and
@@ -270,7 +272,8 @@ toast only. With the stock service the setting is ignored.
 ## Development
 
 The center's pure helpers in `Model.js` (history parsing, settings, image
-sanitizing) are covered by Node's built-in test runner:
+sanitizing) are covered by Node's built-in test runner, along with a guard that
+every QML `Text` element chooses a text format:
 
 ```bash
 node --test tests/*.test.mjs

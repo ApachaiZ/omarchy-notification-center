@@ -945,6 +945,7 @@ Panel {
     Item { Layout.fillWidth: true; implicitHeight: 1 }
 
     Text {
+      textFormat: Text.PlainText
       text: stepper.label
       color: root.fg
       font.family: root.fontFamily
@@ -965,6 +966,7 @@ Panel {
     }
 
     Text {
+      textFormat: Text.PlainText
       text: stepper.value + " px"
       color: root.fg
       font.family: root.fontFamily
@@ -1225,6 +1227,7 @@ Panel {
                     rowSpacing: Style.space(6)
 
                     Text {
+                      textFormat: Text.PlainText
                       text: "Top"
                       color: root.fg
                       font.family: root.fontFamily
@@ -1269,6 +1272,7 @@ Panel {
                     }
 
                     Text {
+                      textFormat: Text.PlainText
                       text: "Bottom"
                       color: root.fg
                       font.family: root.fontFamily
@@ -1367,6 +1371,7 @@ Panel {
                     spacing: Style.space(6)
 
                     Text {
+                      textFormat: Text.PlainText
                       text: "Screen"
                       width: Style.space(52)
                       height: Style.space(28)
@@ -1497,6 +1502,7 @@ Panel {
                     spacing: Style.space(6)
 
                     Text {
+                      textFormat: Text.PlainText
                       text: "Position"
                       color: root.fg
                       font.family: root.fontFamily
@@ -1515,6 +1521,7 @@ Panel {
                     }
 
                     Text {
+                      textFormat: Text.PlainText
                       text: !root.store || root.store.barSection === ""
                         ? "—"
                         : (root.store.barIndex + 1) + " / " + (root.store.barSizes[root.store.barSection] || 0)
@@ -1580,6 +1587,7 @@ Panel {
                     spacing: Style.space(6)
 
                     Text {
+                      textFormat: Text.PlainText
                       text: "Confirmation"
                       color: root.fg
                       font.family: root.fontFamily
@@ -1667,6 +1675,7 @@ Panel {
           spacing: Style.space(6)
 
           Text {
+            textFormat: Text.PlainText
             text: "Bodies"
             width: Style.space(100)
             color: root.fg
@@ -1708,6 +1717,7 @@ Panel {
           spacing: Style.space(6)
 
           Text {
+            textFormat: Text.PlainText
             text: "Previews"
             width: Style.space(100)
             color: root.fg
@@ -1749,6 +1759,7 @@ Panel {
           spacing: Style.space(6)
 
           Text {
+            textFormat: Text.PlainText
             text: "Unread badge"
             width: Style.space(100)
             color: root.fg
@@ -1790,6 +1801,7 @@ Panel {
           spacing: Style.space(6)
 
           Text {
+            textFormat: Text.PlainText
             text: "Capture toasts"
             width: Style.space(100)
             color: root.fg
@@ -1824,6 +1836,7 @@ Panel {
       }
 
       Text {
+        textFormat: Text.PlainText
         width: parent.width
         leftPadding: Style.space(8)
         rightPadding: Style.space(8)
@@ -1861,6 +1874,7 @@ Panel {
           spacing: Style.space(6)
 
           Text {
+            textFormat: Text.PlainText
             text: "Engine"
             width: Style.space(100)
             color: root.fg
@@ -1889,6 +1903,7 @@ Panel {
           spacing: Style.space(6)
 
           Text {
+            textFormat: Text.PlainText
             text: "Actions"
             width: Style.space(100)
             color: root.fg
@@ -1930,6 +1945,7 @@ Panel {
           spacing: Style.space(6)
 
           Text {
+            textFormat: Text.PlainText
             text: "DND bypass"
             width: Style.space(100)
             color: root.fg
@@ -1964,6 +1980,7 @@ Panel {
       }
 
       Text {
+        textFormat: Text.PlainText
         width: parent.width
         leftPadding: Style.space(8)
         rightPadding: Style.space(8)
@@ -1976,6 +1993,7 @@ Panel {
       }
 
       Text {
+        textFormat: Text.PlainText
         width: parent.width
         leftPadding: Style.space(8)
         rightPadding: Style.space(8)
@@ -2017,6 +2035,7 @@ Panel {
           spacing: Style.space(6)
 
           Text {
+            textFormat: Text.PlainText
             text: "Enter"
             width: Style.space(100)
             color: root.fg
@@ -2058,6 +2077,7 @@ Panel {
           spacing: Style.space(6)
 
           Text {
+            textFormat: Text.PlainText
             text: "Hint bar"
             width: Style.space(100)
             color: root.fg
@@ -2099,6 +2119,7 @@ Panel {
           spacing: Style.space(6)
 
           Text {
+            textFormat: Text.PlainText
             text: "Search"
             width: Style.space(100)
             color: root.fg
@@ -2140,6 +2161,7 @@ Panel {
           spacing: Style.space(6)
 
           Text {
+            textFormat: Text.PlainText
             text: "DND"
             width: Style.space(100)
             color: root.fg
@@ -2181,6 +2203,7 @@ Panel {
           spacing: Style.space(6)
 
           Text {
+            textFormat: Text.PlainText
             text: "Details"
             width: Style.space(100)
             color: root.fg
@@ -2222,6 +2245,7 @@ Panel {
           spacing: Style.space(6)
 
           Text {
+            textFormat: Text.PlainText
             text: "Help"
             width: Style.space(100)
             color: root.fg
@@ -2263,6 +2287,7 @@ Panel {
           spacing: Style.space(6)
 
           Text {
+            textFormat: Text.PlainText
             text: "Settings"
             width: Style.space(100)
             color: root.fg
@@ -2749,6 +2774,7 @@ Panel {
                   height: sectionLabel.implicitHeight + Style.space(4)
 
                   Text {
+                    textFormat: Text.PlainText
                     id: sectionLabel
                     text: parent.section
                     color: Qt.darker(root.fg, 1.7)
