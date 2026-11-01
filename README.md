@@ -132,7 +132,7 @@ The center continues to work either way.
   keeps its own history.
 
 The engine is a separate plugin and repository. The center and the engine are
-published as two separate marketplace listings.
+two separate plugins; each needs its own marketplace listing if published.
 
 ## Settings
 
