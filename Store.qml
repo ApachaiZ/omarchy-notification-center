@@ -58,6 +58,7 @@ Item {
   property bool hideBodies: false
   property bool showPreviews: true
   property bool showBadge: true
+  property bool captureToasts: true
   property string searchKey: "/"
   property string dndKey: "d"
   property string detailKey: "i"
@@ -128,6 +129,7 @@ Item {
     if (typeof store.service.setCenterOpen === "function")
       store.service.setCenterOpen(store.hostOpen === true)
     store.dnd = store.service.doNotDisturb === true
+    store.service.captureToasts = store.captureToasts
     store.archiveEntries = store.service.archiveEntries || []
     store.refreshLive()
   }
@@ -254,6 +256,8 @@ Item {
     store.hideBodies = parsed.hideBodies
     store.showPreviews = parsed.showPreviews
     store.showBadge = parsed.showBadge
+    store.captureToasts = parsed.captureToasts !== false
+    if (store.service) store.service.captureToasts = store.captureToasts
     store.searchKey = parsed.searchKey
     store.dndKey = parsed.dndKey
     store.detailKey = parsed.detailKey
@@ -334,6 +338,7 @@ Item {
       hideBodies: store.hideBodies,
       showPreviews: store.showPreviews,
       showBadge: store.showBadge,
+      captureToasts: store.captureToasts,
       searchKey: store.searchKey,
       dndKey: store.dndKey,
       detailKey: store.detailKey,
@@ -479,6 +484,14 @@ Item {
     var next = !!value
     if (store.showBadge === next) return
     store.showBadge = next
+    store.scheduleCenterStateSave()
+  }
+
+  function setCaptureToasts(value) {
+    var next = !!value
+    if (store.captureToasts === next) return
+    store.captureToasts = next
+    if (store.service) store.service.captureToasts = next
     store.scheduleCenterStateSave()
   }
 

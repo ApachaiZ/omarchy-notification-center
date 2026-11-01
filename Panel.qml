@@ -46,7 +46,7 @@ Panel {
   property bool helpOpen: false
   property int settingsCursor: 0
   property int screenCursor: 0
-  readonly property int settingsRowCount: 21
+  readonly property int settingsRowCount: 22
   readonly property var screenList: Quickshell.screens
   readonly property var centerScreens: {
     var screens = Quickshell.screens
@@ -391,13 +391,14 @@ Panel {
     case 11: root.store.setHideBodies(!root.store.hideBodies); break
     case 12: root.store.setShowPreviews(!root.store.showPreviews); break
     case 13: root.store.setShowBadge(!root.store.showBadge); break
-    case 14: root.store.setEnterOpens(root.store.enterOpens === "app" ? "detail" : "app"); break
-    case 15: root.store.setShortcutBar(!root.store.shortcutBar); break
-    case 16: root.store.setSearchKey(root.store.searchKey === "ctrl+f" ? "/" : "ctrl+f"); break
-    case 17: root.store.setDndKey(root.store.dndKey === "D" ? "d" : "D"); break
-    case 18: root.store.setDetailKey(root.store.detailKey === "I" ? "i" : "I"); break
-    case 19: root.store.setHelpKey(root.store.helpKey === "F1" ? "?" : "F1"); break
-    case 20: root.store.setSettingsKey(root.store.settingsKey === "P" ? "s" : "P"); break
+    case 14: root.store.setCaptureToasts(!root.store.captureToasts); break
+    case 15: root.store.setEnterOpens(root.store.enterOpens === "app" ? "detail" : "app"); break
+    case 16: root.store.setShortcutBar(!root.store.shortcutBar); break
+    case 17: root.store.setSearchKey(root.store.searchKey === "ctrl+f" ? "/" : "ctrl+f"); break
+    case 18: root.store.setDndKey(root.store.dndKey === "D" ? "d" : "D"); break
+    case 19: root.store.setDetailKey(root.store.detailKey === "I" ? "i" : "I"); break
+    case 20: root.store.setHelpKey(root.store.helpKey === "F1" ? "?" : "F1"); break
+    case 21: root.store.setSettingsKey(root.store.settingsKey === "P" ? "s" : "P"); break
     }
   }
 
@@ -1761,6 +1762,59 @@ Panel {
           }
         }
       }
+
+      CursorRow {
+        active: root.settingsCursor === 14
+
+        Row {
+          anchors.centerIn: parent
+          spacing: Style.space(6)
+
+          Text {
+            text: "Capture toasts"
+            width: Style.space(100)
+            color: root.fg
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          Button {
+            text: "On"
+            Layout.preferredWidth: Style.space(64)
+            focusable: true
+            selected: root.store !== null && root.store.captureToasts
+            bordered: true
+            fontSize: Style.font.bodySmall
+            fontFamily: root.fontFamily
+            foreground: root.fg
+            onClicked: if (root.store) root.store.setCaptureToasts(true)
+          }
+
+          Button {
+            text: "Off"
+            Layout.preferredWidth: Style.space(64)
+            focusable: true
+            selected: root.store !== null && !root.store.captureToasts
+            bordered: true
+            fontSize: Style.font.bodySmall
+            fontFamily: root.fontFamily
+            foreground: root.fg
+            onClicked: if (root.store) root.store.setCaptureToasts(false)
+          }
+        }
+      }
+
+      Text {
+        width: parent.width
+        leftPadding: Style.space(8)
+        rightPadding: Style.space(8)
+        text: "Live toasts still appear. While enabled, this plugin replaces omarchy.notifications for display and management; disable it to use the stock service."
+        color: root.fg
+        opacity: 0.65
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        wrapMode: Text.WordWrap
+      }
     }
   }
 
@@ -1785,7 +1839,7 @@ Panel {
       spacing: Style.space(7)
 
       CursorRow {
-        active: root.settingsCursor === 14
+        active: root.settingsCursor === 15
 
         Row {
           anchors.centerIn: parent
@@ -1826,7 +1880,7 @@ Panel {
       }
 
       CursorRow {
-        active: root.settingsCursor === 15
+        active: root.settingsCursor === 16
 
         Row {
           anchors.centerIn: parent
@@ -1867,7 +1921,7 @@ Panel {
       }
 
       CursorRow {
-        active: root.settingsCursor === 16
+        active: root.settingsCursor === 17
 
         Row {
           anchors.centerIn: parent
@@ -1908,7 +1962,7 @@ Panel {
       }
 
       CursorRow {
-        active: root.settingsCursor === 17
+        active: root.settingsCursor === 18
 
         Row {
           anchors.centerIn: parent
@@ -1949,7 +2003,7 @@ Panel {
       }
 
       CursorRow {
-        active: root.settingsCursor === 18
+        active: root.settingsCursor === 19
 
         Row {
           anchors.centerIn: parent
@@ -1990,7 +2044,7 @@ Panel {
       }
 
       CursorRow {
-        active: root.settingsCursor === 19
+        active: root.settingsCursor === 20
 
         Row {
           anchors.centerIn: parent
@@ -2031,7 +2085,7 @@ Panel {
       }
 
       CursorRow {
-        active: root.settingsCursor === 20
+        active: root.settingsCursor === 21
 
         Row {
           anchors.centerIn: parent

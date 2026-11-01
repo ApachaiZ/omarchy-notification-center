@@ -54,3 +54,10 @@ test("popup placement clamps a centered panel to the top", () => {
   assert.equal(Logic.popupPlacement("center-center", "top", 26, 8).vertical, "top")
   assert.equal(Logic.popupPlacement("bottom-right", "top", 26, 8).vertical, "bottom")
 })
+
+test("captureToasts defaults on and can be disabled", () => {
+  assert.equal(Model.parseCenterState("").captureToasts, true)
+  assert.equal(Model.parseCenterState("{}").captureToasts, true)
+  assert.equal(Model.parseCenterState(JSON.stringify({ captureToasts: false })).captureToasts, false)
+  assert.equal(Model.parseCenterState(JSON.stringify({ captureToasts: true })).captureToasts, true)
+})

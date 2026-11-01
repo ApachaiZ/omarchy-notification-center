@@ -3,10 +3,12 @@
 ![Omarchy Notification Center — your notifications, your layout](preview.png)
 
 A notification daemon and center for [Omarchy](https://omarchy.org) Quattro. The plugin owns the notification server
-and its toasts, and adds somewhere to look back at them: a scrollable list of
-cards, a detail card per notification, 30 days of private history, search,
-dismiss one or all, an unread badge, Do Not Disturb, and a settings view for
-layout, spacing, monitor, and shortcuts.
+and its toasts, so while enabled it replaces `omarchy.notifications` for
+notification display and management. It adds somewhere to look back at them: a
+scrollable list of cards, a detail card per notification, 30 days of private
+history (capture can be turned off), search, dismiss one or all, an unread
+badge, Do Not Disturb, and a settings view for layout, spacing, monitor, and
+shortcuts.
 
 ![Notification list on an empty desktop](screenshots/center-list.jpg)
 
@@ -16,7 +18,8 @@ All captures use synthetic notification content on an empty desktop.
 
 - **30 days of history** — notifications currently on screen plus one shared
   archive (30 days, up to 1000 entries) owned by the daemon and read directly
-  by the center.
+  by the center. **Capture toasts** can be switched Off to keep the center
+  history from growing; live toasts still display and remain actionable.
 - **Search** — `/` (or `Ctrl+F`) and the header icon filter app names, titles,
   and bodies.
 - **Date groups** — the list separates Today, Yesterday, weekdays, and older
@@ -86,6 +89,26 @@ All captures use synthetic notification content on an empty desktop.
 | --- | --- |
 | ![Unread badge](screenshots/bar-badge.png) | ![Do Not Disturb](screenshots/bar-dnd.png) |
 
+## Replacing omarchy.notifications
+
+While enabled, the plugin owns the notification server and its toasts, so it
+replaces `omarchy.notifications` for notification display and management. It
+implements the same server capabilities — actions, images, markup, Do Not
+Disturb, persistence, restart restore, and history — and adds the center. The
+shell's clone guard keeps the stock service disabled; both cannot own the
+notification bus at the same time.
+
+The **Capture toasts** setting affects history only:
+
+- **On (default)** — received toasts are displayed and kept in the 30-day
+  center history.
+- **Off** — live toasts still display and can be acted on, but new
+  notifications are not added to history. Existing history is untouched.
+
+To hand notification handling back to the stock plugin, disable this plugin
+and enable `omarchy.notifications`; the center UI is part of this plugin and is
+not available while the stock service owns the bus.
+
 ## Settings
 
 The gear button in the panel header or the configured Settings key (`s` by
@@ -103,7 +126,9 @@ default; `Shift+P` is selectable) opens the settings view:
   modes they stack with horizontal dividers; in a horizontal band they run
   left to right as equal columns separated by vertical rules.
 - **Privacy** — show/hide bodies, show/hide previews (hiding purges the
-  archive image copies), and show/hide the unread badge.
+  archive image copies), show/hide the unread badge, and **Capture toasts**
+  On/Off. On keeps received toasts in history; Off only shows them live. The
+  plugin still displays and manages notifications either way.
 - **Shortcuts** — choose what `Enter` opens (app or details), show/hide the
   hint bar, and pick the Search (`/` or `Ctrl+F`), DND (`d`/`D`), Details
   (`i`/`I`), Settings (`s`/`Shift+P`), and Help (`?`/`F1`) keys.
@@ -202,7 +227,8 @@ Notification images are copied only from local files; remote URLs and other
 URI schemes are dropped, so displaying a notification never fetches the
 network. Bodies render as StyledText with `<img>` tags stripped before Qt
 parses them. The archive, history, and image directories are created with
-mode `0700`.
+mode `0700`. With **Capture toasts** off, new notifications are not written to
+the archive; they stay in memory for their live toast only.
 
 ## Development
 

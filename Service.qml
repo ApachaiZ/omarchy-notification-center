@@ -117,6 +117,13 @@ Item {
   // surface is hidden so the two overlays cannot sit on top of each other.
   property bool centerOpen: false
 
+  // Set by the center settings. On: received toasts are persisted and kept in
+  // the center history. Off: live toasts still display, but nothing new is
+  // archived. The notification server itself stays active; the shell's clone
+  // guard prevents the stock omarchy.notifications service from sharing the
+  // notification bus at runtime.
+  property bool captureToasts: true
+
   function setCenterOpen(value) {
     service.centerOpen = !!value
   }
@@ -501,7 +508,8 @@ Item {
       // can leave is a history entry. Write it straight into history —
       // "what did I miss while silenced" is exactly what history is for.
       if (!isEphemeral(notification)) {
-        writeSilenced(notification, snapshot)
+        if (service.captureToasts) writeSilenced(notification, snapshot)
+        else service.releaseSilenced(notification, snapshot.originalId)
         return
       }
       delete liveRefs[snapshot.originalId]
@@ -509,7 +517,7 @@ Item {
       return
     }
 
-    persistPopupFile(snapshot)
+    if (service.captureToasts) persistPopupFile(snapshot)
     watchForUpdates(notification, snapshot)
     // Qt.callLater avoids "QV4::Object::insertMember" crashes when a
     // Repeater is mid-incubation while we mutate its model.
@@ -601,7 +609,7 @@ Item {
       // The file name is the timestamp and id this popup was persisted under,
       // so the rewrite lands on the same file: a restart restores the version
       // last shown, and so does the copy that ends up in history.
-      persistPopupFile(updated)
+      if (service.captureToasts) persistPopupFile(updated)
       return
     }
   }
@@ -660,7 +668,7 @@ Item {
     // survive to the next shell restart. Its persisted copy becomes the newest
     // archive entry, and only the live JSON is deleted; archive images stay.
     if (entry) {
-      if (entry.originalId >= 0) {
+      if (service.captureToasts && entry.originalId >= 0) {
         var stem = NotificationLogic.imageStem(entry)
         service.appendArchiveEntry(service.persistedEntries[stem] || entry)
         delete service.persistedEntries[stem]
@@ -848,6 +856,7 @@ Item {
     "done\n"
 
   function persistPopupFile(snapshot) {
+    if (!service.captureToasts) return
     // The JSON travels on stdin, never in argv, so private summaries and
     // bodies cannot be read from /proc/<pid>/cmdline by another local user.
     // The mkdir guards notifications that arrive before ensureDirsProc has

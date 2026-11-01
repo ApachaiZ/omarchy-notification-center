@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "apach.notifications",
   "name": "Notification Center",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "author": "apach",
   "license": "GPL-3.0",
-  "description": "Notification daemon and keyboard-first center: toasts, floating window or horizontal/vertical band, 30-day history, search, dismiss, Do Not Disturb, and open-the-sender cards.",
+  "description": "Notification daemon and keyboard-first center: live toasts, optional history capture, floating or band layouts, search, dismiss, Do Not Disturb, and open-the-sender cards. Replaces omarchy.notifications while enabled.",
   "kinds": ["service", "bar-widget"],
   "entryPoints": {
     "service": "Service.qml",
