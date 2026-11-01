@@ -323,6 +323,39 @@ function engineEnabledFromShellConfig(raw, engineId) {
   return false
 }
 
+// Read the engine manifest version and compare dotted versions numerically.
+// The center uses this to refuse to delegate legacy cleanup to an engine older
+// than 1.0.4, which dropped expired archive entries without deleting their
+// images.
+function manifestVersion(raw) {
+  try {
+    var value = JSON.parse(String(raw || ""))
+    return value && typeof value === "object" ? String(value.version || "") : ""
+  } catch (e) {
+    return ""
+  }
+}
+
+function versionAtLeast(value, minimum) {
+  function parts(text) {
+    var out = []
+    var bits = String(text || "").split(/[^0-9]+/)
+    for (var i = 0; i < bits.length; i++) {
+      if (bits[i] !== "") out.push(Number(bits[i]))
+    }
+    return out
+  }
+  var a = parts(value)
+  var b = parts(minimum)
+  if (a.length === 0) return false
+  for (var i = 0; i < Math.max(a.length, b.length); i++) {
+    var left = a[i] || 0
+    var right = b[i] || 0
+    if (left !== right) return left > right
+  }
+  return true
+}
+
 // Null-safe stand-in so detail-view bindings can read entry fields even when
 // no notification is selected.
 function emptyEntry() {
@@ -345,6 +378,8 @@ if (typeof module !== "undefined") {
     safeAppIcon: safeAppIcon,
     imageStem: imageStem,
     engineEnabledFromShellConfig: engineEnabledFromShellConfig,
+    manifestVersion: manifestVersion,
+    versionAtLeast: versionAtLeast,
     styledSanitizedBody: styledSanitizedBody,
     styledBody: styledBody,
     parseEntries: parseEntries,

@@ -100,3 +100,14 @@ test("legacy cleanup follows the engine enabled state, not its directory", () =>
   assert.equal(Model.engineEnabledFromShellConfig("not json", engine), false)
   assert.equal(Model.engineEnabledFromShellConfig(enabled, "other.plugin"), false)
 })
+
+test("engine versions are compared numerically", () => {
+  assert.equal(Model.versionAtLeast("1.0.5", "1.0.5"), true)
+  assert.equal(Model.versionAtLeast("1.0.6", "1.0.5"), true)
+  assert.equal(Model.versionAtLeast("1.0.10", "1.0.5"), true)
+  assert.equal(Model.versionAtLeast("1.1.0", "1.0.5"), true)
+  assert.equal(Model.versionAtLeast("1.0.4", "1.0.5"), false)
+  assert.equal(Model.versionAtLeast("", "1.0.5"), false)
+  assert.equal(Model.manifestVersion('{"version":"1.0.5"}'), "1.0.5")
+  assert.equal(Model.manifestVersion("not json"), "")
+})

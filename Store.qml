@@ -117,17 +117,29 @@ Item {
 
   property bool legacyCleanupStarted: false
   property bool engineEnabled: false
+  property string engineVersion: ""
+  property bool engineManifestLoaded: false
+  property bool engineVersionSafe: false
+  property bool engineUpdateAttempted: false
 
   // The v3 center keeps no private archive. With the stock service the old
   // v1.6 archive would otherwise sit on disk forever, past its retention and
-  // after "Clear all". The engine owns the migration path only when it is
-  // enabled; an installed-but-disabled engine will never run it. Wait for
-  // shell.json so the decision is based on configuration, not on a directory.
+  // after "Clear all". Only an enabled engine whose manifest is at least
+  // 1.0.4 can safely own the migration: older engines dropped expired entries
+  // without deleting their images. Wait for both shell.json and the engine
+  // manifest so the decision is based on configuration and version.
   function cleanupLegacyArchive() {
-    if (!store.shellConfigLoaded) return
+    if (!store.shellConfigLoaded || !store.engineManifestLoaded) return
     if (store.legacyCleanupStarted) return
     store.legacyCleanupStarted = true
     legacyCleanupProc.running = true
+  }
+
+  function maybeUpdateEngine() {
+    if (!store.engineEnabled || !store.engineManifestLoaded) return
+    if (store.engineVersionSafe || store.engineUpdateAttempted) return
+    store.engineUpdateAttempted = true
+    engineUpdateProc.running = true
   }
 
   // ---- data ----
@@ -274,6 +286,7 @@ Item {
     }
     store.shellConfigLoaded = true
     store.engineEnabled = Model.engineEnabledFromShellConfig(raw, store.engineId)
+    store.maybeUpdateEngine()
     store.cleanupLegacyArchive()
     var sections = ["left", "center", "right"]
     var sizes = ({})
@@ -520,6 +533,7 @@ Item {
     // the script free of shell interpolation.
     store.enqueueAction(["bash", "-c",
       'if [[ -d "$1" ]]; then\n' +
+      '  omarchy plugin update apach.notification-engine --yes >/dev/null 2>&1 || true\n' +
       '  omarchy plugin enable apach.notification-engine\n' +
       'else\n' +
       '  omarchy plugin add "$2" --enable --yes\n' +
@@ -678,9 +692,21 @@ Item {
   Process {
     id: legacyCleanupProc
     command: ["bash", "-c",
-      '[[ -d "$2" ]] || exit 0\n[[ "$1" == "enabled" ]] && exit 0\nrm -rf -- "$2"',
-      "--", store.engineEnabled ? "enabled" : "disabled", store.legacyDir]
+      '[[ -d "$3" ]] || exit 0\n[[ "$1" == "enabled" && "$2" == "safe" ]] && exit 0\nrm -rf -- "$3"',
+      "--", store.engineEnabled ? "enabled" : "disabled",
+      store.engineVersionSafe ? "safe" : "unsafe", store.legacyDir]
     running: false
+  }
+
+  // An existing installation can have an old engine enabled while the center
+  // is updated. Update it once per session; a live keepLoaded service still
+  // needs the next shell restart, but the legacy cleanup above falls back to
+  // the center until then. omarchy plugin update rescans plugins.
+  Process {
+    id: engineUpdateProc
+    command: ["omarchy", "plugin", "update", "apach.notification-engine", "--yes"]
+    running: false
+    onExited: engineManifestFile.reload()
   }
 
   Process {
@@ -723,6 +749,31 @@ Item {
     atomicWrites: false
     printErrors: false
     onLoaded: store.parseShellConfig(text())
+  }
+
+  // The engine version decides whether it can own the pre-3.0 migration. An
+  // installed-but-disabled engine has no manifest loaded here only if the
+  // directory is missing; that is treated as unsafe and cleaned by the center.
+  FileView {
+    id: engineManifestFile
+    path: store.engineDir + "/manifest.json"
+    watchChanges: true
+    printErrors: false
+    onLoaded: {
+      store.engineVersion = Model.manifestVersion(text())
+      store.engineVersionSafe = Model.versionAtLeast(store.engineVersion, "1.0.5")
+      store.engineManifestLoaded = true
+      store.maybeUpdateEngine()
+      store.cleanupLegacyArchive()
+    }
+    onLoadFailed: {
+      if (store.engineManifestLoaded) return
+      store.engineVersion = ""
+      store.engineVersionSafe = false
+      store.engineManifestLoaded = true
+      store.cleanupLegacyArchive()
+    }
+    onFileChanged: reload()
   }
 
   // The optional engine writes one archive JSON; the stock service writes one

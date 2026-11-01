@@ -58,7 +58,9 @@ All captures use synthetic notification content on an empty desktop.
   element is rendered as plain text, except notification bodies, which use
   styled text only after `<img>` tags have been stripped. The pre-3.0 private
   archive is removed at startup unless `apach.notification-engine` is enabled
-  to migrate it; an installed-but-disabled engine no longer keeps it alive.
+  **and at least 1.0.5** to migrate it; an installed-but-disabled or older
+  engine no longer keeps it alive. The center updates an older installed engine
+  once and cleans the legacy tree itself until the next shell restart.
 - **Keyboard control** — arrows or `h`/`j`/`k`/`l`, `Enter`, `Del`/`x`, `/`
   search, `d` Do Not Disturb, `Shift+C` clear, `g`/`G`, `?`, `Esc`, and
   the Settings key (default `s`). The search, DND, details, settings, and
