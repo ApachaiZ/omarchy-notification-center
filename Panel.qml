@@ -41,9 +41,6 @@ Panel {
   // keyboard share one selection like the bluetooth panel does.
   property int cursorIndex: -1
   property string query: ""
-  // Render the newest page instead of instantiating the whole archive. The
-  // footer and G extend it; search still spans the full history.
-  property int renderLimit: 150
   property bool searchOpen: false
   property bool clearArmed: false
   property bool helpOpen: false
@@ -61,6 +58,10 @@ Panel {
     return out
   }
   property Item activeContent: null
+  // Height available to the host window on its screen, published by
+  // CenterWindow. The virtualized lists cap themselves to it so the card
+  // never grows past the monitor.
+  property real windowAvailableH: 800
 
   function activeSearchField() {
     return root.activeContent ? root.activeContent.searchField : null
@@ -115,14 +116,16 @@ Panel {
     return out
   }
 
-  readonly property var visibleEntries: {
-    var limit = Math.max(1, root.renderLimit)
-    return root.matchedEntries.length > limit
-      ? root.matchedEntries.slice(0, limit) : root.matchedEntries
-  }
-
-  function showOlder() {
-    root.renderLimit = Math.min(root.matchedEntries.length, root.renderLimit + 150)
+  // Flat rows for the two virtualized lists. The day label travels with each
+  // row so the vertical ListView can draw section headers without a nested
+  // model; only delegates inside the viewport are instantiated.
+  readonly property var listModel: {
+    var out = []
+    for (var i = 0; i < root.matchedEntries.length; i++) {
+      var item = root.matchedEntries[i]
+      out.push({ entry: item, index: i, day: root.dayLabel(item.timestamp) })
+    }
+    return out
   }
 
   function previewSource(entry) {
@@ -142,23 +145,6 @@ Panel {
     if (diff === 1) return "Yesterday"
     if (diff > 1 && diff < 7) return Qt.formatDate(date, "dddd")
     return Qt.formatDate(date, "d MMMM yyyy")
-  }
-
-  readonly property var groupedEntries: {
-    var groups = []
-    var current = null
-    var label = ""
-    for (var i = 0; i < root.visibleEntries.length; i++) {
-      var item = root.visibleEntries[i]
-      var next = root.dayLabel(item.timestamp)
-      if (current === null || next !== label) {
-        current = { label: next, entries: [] }
-        groups.push(current)
-        label = next
-      }
-      current.entries.push({ entry: item, index: i })
-    }
-    return groups
   }
 
   readonly property color fg: bar ? bar.foreground : Commons.Color.foreground
@@ -449,9 +435,9 @@ Panel {
   }
 
   function openDetailAtCursor() {
-    if (root.cursorIndex < 0 && root.visibleEntries.length > 0) root.cursorIndex = 0
-    if (root.cursorIndex >= 0 && root.cursorIndex < root.visibleEntries.length)
-      root.openDetail(root.visibleEntries[root.cursorIndex])
+    if (root.cursorIndex < 0 && root.matchedEntries.length > 0) root.cursorIndex = 0
+    if (root.cursorIndex >= 0 && root.cursorIndex < root.matchedEntries.length)
+      root.openDetail(root.matchedEntries[root.cursorIndex])
   }
 
   function openSearch() {
@@ -526,7 +512,7 @@ Panel {
     if (root.selectedEntry !== null) { root.selectedEntry = null; return }
     if (root.store && root.store.enterOpens === "detail") root.openDetailAtCursor()
     else {
-      if (root.cursorIndex < 0 && root.visibleEntries.length > 0) root.cursorIndex = 0
+      if (root.cursorIndex < 0 && root.matchedEntries.length > 0) root.cursorIndex = 0
       root.activateCursor()
     }
   }
@@ -544,6 +530,10 @@ Panel {
     root.cursorIndex = -1
     var v = root.activeScrollView()
     if (v) v.contentY = 0
+    // A new search starts at the top of its own results, not at the previous
+    // scroll offset.
+    if (root.activeContent && root.activeContent.resetListScroll)
+      root.activeContent.resetListScroll()
   }
 
   // ---- navigation / presentation ----
@@ -554,13 +544,13 @@ Panel {
   // ---- keyboard cursor ----
 
   function clampCursor() {
-    var n = root.visibleEntries.length
+    var n = root.matchedEntries.length
     if (n === 0) root.cursorIndex = -1
     else if (root.cursorIndex >= n) root.cursorIndex = n - 1
   }
 
   function moveCursor(dy) {
-    var n = root.visibleEntries.length
+    var n = root.matchedEntries.length
     if (n === 0) return
     if (root.cursorIndex < 0) {
       root.cursorIndex = dy > 0 ? 0 : n - 1
@@ -571,13 +561,13 @@ Panel {
   }
 
   function activateCursor() {
-    if (root.cursorIndex < 0 || root.cursorIndex >= root.visibleEntries.length) return
-    root.openDetail(root.visibleEntries[root.cursorIndex])
+    if (root.cursorIndex < 0 || root.cursorIndex >= root.matchedEntries.length) return
+    root.openDetail(root.matchedEntries[root.cursorIndex])
   }
 
   function deleteCursorEntry() {
-    if (root.cursorIndex < 0 || root.cursorIndex >= root.visibleEntries.length) return
-    root.deleteEntry(root.visibleEntries[root.cursorIndex])
+    if (root.cursorIndex < 0 || root.cursorIndex >= root.matchedEntries.length) return
+    root.deleteEntry(root.matchedEntries[root.cursorIndex])
   }
 
   function iconSource(icon) {
@@ -1002,7 +992,16 @@ Panel {
     default property alias content: inner.children
 
     width: parent ? parent.width : 0
-    height: inner.childrenRect.height + Style.space(8)
+    // Measure the tallest child directly. childrenRect would loop here
+    // because the usual child is centered in a container that fills the row.
+    height: {
+      var h = 0
+      for (var i = 0; i < inner.children.length; i++) {
+        var child = inner.children[i]
+        if (child && child.visible) h = Math.max(h, child.implicitHeight)
+      }
+      return h + Style.space(8)
+    }
 
     Rectangle {
       anchors.fill: parent
@@ -2226,7 +2225,7 @@ Panel {
       desiredWidth: {
         if (!root.horizontal) return Style.space(430)
         var spacing = root.store ? root.store.cardSpacing : 10
-        var count = root.visibleEntries.length
+        var count = root.matchedEntries.length
         var cards = count > 0 ? count * Style.space(280) + (count - 1) * spacing : 0
         var content = Math.max(Style.space(480), cards)
         if (root.settingsOpen) content = Math.max(content, Style.space(920))
@@ -2237,6 +2236,12 @@ Panel {
         + (root.footerVisible && contentLoader.item ? contentLoader.item.footerHeight : 0)
         + (root.settingsOpen ? Style.space(16) : 0)
       focusTarget: contentLoader.item ? contentLoader.item.keyCatcher : null
+
+      // Publish the real usable height so the virtualized list can cap itself
+      // instead of overflowing the monitor. The primary window wins; the others
+      // only fill in while it has not reported yet.
+      onAvailableHChanged: if (isPrimary || root.windowAvailableH <= 0) root.windowAvailableH = availableH
+      Component.onCompleted: if (isPrimary || root.windowAvailableH <= 0) root.windowAvailableH = availableH
 
       Loader {
         id: contentLoader
@@ -2283,56 +2288,35 @@ Panel {
         return h + Style.space(10) * (count - 1)
       }
 
-      // Keep the cursor's row visible without fighting normal scrolling: only
-      // nudge the Flickable when the row would otherwise sit outside the view.
+      // Maximum height of the virtualized list inside the card. The card is
+      // clamped to the screen by CenterWindow, so the list must stop before
+      // the header, search field, footer and paddings eat the rest.
+      readonly property real listMaxHeight: {
+        var pad = root.store ? root.store.padding : 12
+        var chrome = headerRow.height + headerSeparator.height + Style.space(10) * 2
+        if (root.searchOpen) chrome += searchField.height + Style.space(10)
+        if (root.clearArmed) chrome += clearBanner.height + Style.space(10)
+        var footer = root.footerVisible ? contentRoot.footerHeight : 0
+        // Small safety margin for the card border, which is not exposed here.
+        return Math.max(Style.space(140),
+          root.windowAvailableH - pad * 2 - Style.space(6) - footer - chrome)
+      }
+
+      function resetListScroll() {
+        listView.savedY = 0
+        listView.contentY = 0
+        bandList.contentX = 0
+      }
+
+      // Let ListView do the work: it knows the delegate geometry and only
+      // scrolls when the target row is outside the viewport.
       function scrollCursorIntoView() {
         if (root.cursorIndex < 0) return
         if (root.horizontal) {
-          var card = null
-          for (var c = 0; c < bandRow.children.length; c++) {
-            var candidate = bandRow.children[c]
-            if (candidate && candidate.rowIndex !== undefined && candidate.rowIndex === root.cursorIndex) {
-              card = candidate
-              break
-            }
-          }
-          if (!card) return
-          var hmargin = Style.space(16)
-          var left = bandScroll.contentX + hmargin
-          var right = bandScroll.contentX + bandScroll.width - hmargin
-          if (card.x >= left && card.x + card.width <= right) return
-          var maxX = Math.max(0, bandScroll.contentWidth - bandScroll.width)
-          if (card.x < left) bandScroll.contentX = Math.max(0, card.x - hmargin)
-          else bandScroll.contentX = Math.min(maxX, card.x + card.width - bandScroll.width + hmargin)
+          bandList.positionViewAtIndex(root.cursorIndex, ListView.Contain)
           return
         }
-        if (!listRows) return
-        var row = null
-        var groupY = 0
-        for (var g = 0; g < listRows.children.length; g++) {
-          var group = listRows.children[g]
-          if (!group) continue
-          for (var i = 0; i < group.children.length; i++) {
-            var child = group.children[i]
-            if (child && child.rowIndex !== undefined && child.rowIndex === root.cursorIndex) {
-              row = child
-              groupY = group.y
-              break
-            }
-          }
-          if (row) break
-        }
-        if (!row) return
-
-        var margin = Style.space(24)
-        var rowY = listRows.y + groupY + row.y
-        var top = scrollView.contentY + margin
-        var bottom = scrollView.contentY + scrollView.height - margin
-        if (rowY >= top && rowY + row.height <= bottom) return
-
-        var maxY = Math.max(0, scrollView.contentHeight - scrollView.height)
-        if (rowY < top) scrollView.contentY = Math.max(0, rowY - margin)
-        else scrollView.contentY = Math.min(maxY, rowY + row.height - scrollView.height + margin)
+        listView.positionViewAtIndex(root.cursorIndex, ListView.Contain)
       }
 
       anchors.fill: parent
@@ -2383,9 +2367,8 @@ Panel {
           else if (t === root.store.helpKey) root.toggleHelp()
           else if (t === root.store.searchKey) root.openSearch()
           else if (t === root.store.settingsKey) root.openSettings()
-          else if (t === "g") { root.cursorIndex = root.visibleEntries.length > 0 ? 0 : -1; contentRoot.scrollCursorIntoView() }
+          else if (t === "g") { root.cursorIndex = root.matchedEntries.length > 0 ? 0 : -1; contentRoot.scrollCursorIntoView() }
           else if (t === "G") {
-            root.renderLimit = Math.max(root.renderLimit, root.matchedEntries.length)
             root.cursorIndex = Math.max(0, root.matchedEntries.length - 1)
             contentRoot.scrollCursorIntoView()
           }
@@ -2504,7 +2487,7 @@ Panel {
               Keys.onEscapePressed: root.closeSearch()
               Keys.onReturnPressed: {
                 keyCatcher.forceActiveFocus()
-                if (root.cursorIndex < 0 && root.visibleEntries.length > 0) root.cursorIndex = 0
+                if (root.cursorIndex < 0 && root.matchedEntries.length > 0) root.cursorIndex = 0
                 root.activateCursor()
               }
               Keys.onDownPressed: {
@@ -2565,7 +2548,7 @@ Panel {
                 Text { Layout.fillWidth: true; text: "Show or hide this help"; color: root.fg; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
 
                 Text { text: "g / G"; color: Commons.Color.accent; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-                Text { Layout.fillWidth: true; text: "First / last notification (G loads older)"; color: root.fg; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+                Text { Layout.fillWidth: true; text: "First / last notification"; color: root.fg; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
 
                 Text { text: "Shift+C"; color: Commons.Color.accent; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
                 Text { Layout.fillWidth: true; text: "Clear all (twice unless disabled)"; color: root.fg; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
@@ -2584,7 +2567,7 @@ Panel {
 
               // Empty state.
               Column {
-                visible: root.visibleEntries.length === 0
+                visible: root.matchedEntries.length === 0
                 width: parent.width
                 spacing: Style.space(6)
                 topPadding: Style.space(26)
@@ -2609,110 +2592,94 @@ Panel {
                 }
               }
 
-              // Stacked cards for the floating window and the vertical band.
-              Column {
-                id: listRows
+              // Virtualized stack for the floating window and the vertical
+              // band. Only the delegates inside the viewport exist, so the
+              // cost of a 1000-entry archive is a screenful, not 1000 rows.
+              ListView {
+                id: listView
                 width: parent.width
                 visible: !root.horizontal
+                height: count === 0 ? 0 : Math.min(contentHeight, contentRoot.listMaxHeight)
+                contentWidth: width
                 spacing: root.store ? root.store.cardSpacing : 10
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                model: root.listModel
 
-                Repeater {
-                  model: root.groupedEntries
+                // A rebuild replaces the model array. Keep the viewport where
+                // the user left it instead of snapping back to the newest row.
+                property real savedY: 0
+                onContentYChanged: savedY = contentY
+                onModelChanged: Qt.callLater(function() {
+                  listView.contentY = Math.min(listView.savedY,
+                    Math.max(0, listView.contentHeight - listView.height))
+                })
 
-                  delegate: Column {
-                    required property var modelData
-                    width: listRows.width
-                    spacing: Style.space(6)
+                section.property: "day"
+                section.delegate: Item {
+                  required property string section
+                  width: listView.width
+                  height: sectionLabel.implicitHeight + Style.space(4)
 
-                    Text {
-                      visible: modelData.label !== ""
-                      text: modelData.label
-                      color: Qt.darker(root.fg, 1.7)
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.caption
-                      leftPadding: Style.space(2)
-                    }
-
-                    Repeater {
-                      model: modelData.entries
-
-                      delegate: NotificationRow {
-                        required property var modelData
-                        entry: modelData.entry
-                        rowIndex: modelData.index
-                        cursorActive: root.cursorIndex === modelData.index
-                      }
-                    }
+                  Text {
+                    id: sectionLabel
+                    text: parent.section
+                    color: Qt.darker(root.fg, 1.7)
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    leftPadding: Style.space(2)
                   }
+                }
+
+                delegate: NotificationRow {
+                  required property var modelData
+                  required property int index
+                  entry: modelData.entry
+                  rowIndex: index
+                  cursorActive: root.cursorIndex === index
                 }
               }
 
-              Button {
-                visible: !root.horizontal && root.matchedEntries.length > root.visibleEntries.length
-                anchors.horizontalCenter: parent.horizontalCenter
-                text: "Show older (" + (root.matchedEntries.length - root.visibleEntries.length) + ")"
-                focusable: true
-                bordered: true
-                fontSize: Style.font.bodySmall
-                fontFamily: root.fontFamily
-                foreground: root.fg
-                onClicked: root.showOlder()
-              }
-
-              // Side-by-side cards for the horizontal band.
+              // Side-by-side cards for the horizontal band, also virtualized.
               Item {
                 width: parent.width
-                height: bandRow.height + (bandScroll.contentWidth > bandScroll.width
+                height: bandList.height + (bandList.contentWidth > bandList.width
                   ? (root.store ? root.store.padding : 12) + Style.space(8) : 0)
                 visible: root.horizontal
 
-                Flickable {
-                  id: bandScroll
+                ListView {
+                  id: bandList
                   width: parent.width
-                  height: bandRow.height
-                  contentWidth: Math.max(width, bandRow.x + bandRow.implicitWidth)
-                  contentHeight: height
+                  height: Style.space(88)
+                  orientation: ListView.Horizontal
+                  spacing: root.store ? root.store.cardSpacing : 10
                   clip: true
                   boundsBehavior: Flickable.StopAtBounds
-                  interactive: contentWidth > width
+                  model: root.listModel
 
-                  Row {
-                    id: bandRow
-                    x: Math.max(0, (bandScroll.width - implicitWidth) / 2)
-                    spacing: root.store ? root.store.cardSpacing : 10
+                  // Cards have a fixed width; center the row when it does not
+                  // fill the band, and let it scroll when it does.
+                  readonly property real itemsWidth: count > 0
+                    ? count * Style.space(280) + (count - 1) * spacing : 0
+                  leftMargin: Math.max(0, (width - itemsWidth) / 2)
+                  rightMargin: leftMargin
 
-                    Repeater {
-                      model: root.visibleEntries
-
-                      delegate: CompactCard {
-                        required property var modelData
-                        required property int index
-                        entry: modelData
-                        rowIndex: index
-                        cursorActive: root.cursorIndex === index
-                      }
-                    }
-
-                    Button {
-                      visible: root.matchedEntries.length > root.visibleEntries.length
-                      text: "More…"
-                      focusable: true
-                      bordered: true
-                      fontSize: Style.font.bodySmall
-                      fontFamily: root.fontFamily
-                      foreground: root.fg
-                      onClicked: root.showOlder()
-                    }
+                  delegate: CompactCard {
+                    required property var modelData
+                    required property int index
+                    entry: modelData.entry
+                    rowIndex: index
+                    cursorActive: root.cursorIndex === index
                   }
                 }
 
                 Item {
                   id: hScroll
-                  visible: bandScroll.contentWidth > bandScroll.width
+                  visible: bandList.contentWidth > bandList.width
                   anchors.left: parent.left
                   anchors.right: parent.right
                   // Same inset as the cards have from the outer frame.
-                  y: bandRow.height + (root.store ? root.store.padding : 12)
+                  y: bandList.height + (root.store ? root.store.padding : 12)
                   height: Style.space(8)
 
                   Rectangle {
@@ -2721,10 +2688,10 @@ Panel {
                     radius: height / 2
                     color: Commons.Color.accent
                     opacity: hDrag.pressed ? 0.95 : 0.55
-                    width: Math.max(Style.space(28), hScroll.width * hScroll.width / Math.max(1, bandScroll.contentWidth))
+                    width: Math.max(Style.space(28), hScroll.width * hScroll.width / Math.max(1, bandList.contentWidth))
                     x: {
-                      var max = Math.max(1, bandScroll.contentWidth - bandScroll.width)
-                      return (bandScroll.contentX / max) * Math.max(0, hScroll.width - width)
+                      var max = Math.max(1, bandList.contentWidth - bandList.width)
+                      return (bandList.contentX / max) * Math.max(0, hScroll.width - width)
                     }
                   }
 
@@ -2737,9 +2704,9 @@ Panel {
                   }
 
                   function jump(px) {
-                    var max = Math.max(0, bandScroll.contentWidth - bandScroll.width)
+                    var max = Math.max(0, bandList.contentWidth - bandList.width)
                     var span = Math.max(1, hScroll.width - hThumb.width)
-                    bandScroll.contentX = Math.max(0, Math.min(1, (px - hThumb.width / 2) / span)) * max
+                    bandList.contentX = Math.max(0, Math.min(1, (px - hThumb.width / 2) / span)) * max
                   }
                 }
               }

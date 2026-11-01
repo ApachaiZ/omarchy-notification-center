@@ -19,9 +19,9 @@ All captures use synthetic notification content on an empty desktop.
 
 ## Features
 
-- **Paged rendering** — the list renders the newest 150 entries; **Show
-  older** (or `G`) loads more from the full history. Search always spans the
-  whole archive.
+- **Virtualized list** — only the rows inside the viewport are instantiated,
+  so a full 1000-entry archive starts as fast as a handful of notifications.
+  Search spans the whole archive.
 - **History** — reads the active service's history. With the stock
   `omarchy.notifications` service it shows whatever that service retains; with
   the optional **Notification Engine** it keeps 30 days (up to 1000 entries).
@@ -191,7 +191,7 @@ alongside the last-seen timestamp.
 | `↑` / `↓` or `k` / `j` | Move the cursor / scroll |
 | `Enter` or `Space` | Open the sender app (configurable) / go back |
 | `i` | Open the detail card for the selection |
-| `g` / `G` | First / last notification (`G` loads older entries) |
+| `g` / `G` | First / last notification |
 | `Del` or `x` | Remove the selected notification |
 | `d` | Toggle Do Not Disturb |
 | `Shift+C` | Clear all (press twice unless confirmation is off) |
