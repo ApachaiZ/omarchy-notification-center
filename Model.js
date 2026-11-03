@@ -76,6 +76,8 @@ var MAX_APP_LENGTH = 256
 var MAX_GLYPH_LENGTH = 16
 var MAX_SUMMARY_LENGTH = 512
 var MAX_BODY_LENGTH = 8192
+var MAX_IMAGE_LENGTH = 2048
+var MAX_ICON_LENGTH = 2048
 
 function clipText(value, max) {
   var text = String(value || "").replace(/\u0000/g, "")
@@ -109,6 +111,38 @@ function sanitizeBody(body, app, appIcon) {
 
 // ---- entry parsing -------------------------------------------------------
 
+// One sanitized row from one persisted object. `searchText` is precomputed
+// so typing in the search field does not lowercase every body on every
+// keystroke, and a missing/non-numeric timestamp is rejected rather than
+// collapsed into the 0-0 stem shared by every malformed row.
+function parseRow(value, source) {
+  if (!value || typeof value !== "object") return null
+  var originalId = Number(value.originalId || value.id || 0)
+  if (!isFinite(originalId) || originalId < 0) originalId = 0
+  var timestamp = Number(value.timestamp || 0)
+  if (!isFinite(timestamp) || timestamp <= 0) return null
+  var app = clipText(value.app, MAX_APP_LENGTH)
+  var summary = clipText(value.summary, MAX_SUMMARY_LENGTH)
+  var body = clipText(value.body, MAX_BODY_LENGTH)
+  var row = {
+    id: Number(value.id || 0),
+    originalId: originalId,
+    app: app,
+    appIcon: clipText(safeAppIcon(value.appIcon || ""), MAX_ICON_LENGTH),
+    summary: summary,
+    body: body,
+    image: clipText(safeImageSource(value.image || ""), MAX_IMAGE_LENGTH),
+    glyph: clipText(value.glyph, MAX_GLYPH_LENGTH),
+    urgency: typeof value.urgency === "number" ? value.urgency : 1,
+    timestamp: timestamp,
+    stem: imageStem(timestamp, originalId),
+    source: source
+  }
+  row.searchText = (app + "\n" + summary + "\n" + body).toLowerCase()
+  row.sig = contentSignature(row)
+  return row
+}
+
 function parseEntries(raw, source) {
   var lines = String(raw || "").split("\n")
   var entries = []
@@ -116,27 +150,8 @@ function parseEntries(raw, source) {
     var line = lines[i].trim()
     if (!line) continue
     try {
-      var v = JSON.parse(line)
-      if (!v || typeof v !== "object") continue
-      var originalId = Number(v.originalId || v.id || 0)
-      var timestamp = Number(v.timestamp || 0)
-      var row = {
-        id: Number(v.id || 0),
-        originalId: originalId,
-        app: clipText(v.app, MAX_APP_LENGTH),
-        appIcon: safeAppIcon(v.appIcon || ""),
-        summary: clipText(v.summary, MAX_SUMMARY_LENGTH),
-        body: clipText(v.body, MAX_BODY_LENGTH),
-        image: safeImageSource(v.image || ""),
-        glyph: clipText(v.glyph, MAX_GLYPH_LENGTH),
-        execArgv: String(v.execArgv || ""),
-        urgency: typeof v.urgency === "number" ? v.urgency : 1,
-        timestamp: timestamp,
-        stem: imageStem(timestamp, originalId),
-        source: source
-      }
-      row.sig = contentSignature(row)
-      entries.push(row)
+      var row = parseRow(JSON.parse(line), source)
+      if (row) entries.push(row)
     } catch (e) {
       // Torn write from a crash mid-save — skip the line, keep the rest.
     }
@@ -155,11 +170,12 @@ function parseArchive(raw) {
     var parsed = JSON.parse(text)
     var list = Array.isArray(parsed) ? parsed
       : (parsed && Array.isArray(parsed.entries) ? parsed.entries : [])
-    var lines = []
+    var out = []
     for (var i = 0; i < list.length; i++) {
-      if (list[i] && typeof list[i] === "object") lines.push(JSON.stringify(list[i]))
+      var row = parseRow(list[i], "history")
+      if (row) out.push(row)
     }
-    return parseEntries(lines.join("\n"), "history")
+    return out
   } catch (e) {
     return []
   }
@@ -206,6 +222,15 @@ function hash(s) {
   return h
 }
 
+// Whether the unified archive still points at image copies inside the
+// pre-split legacy tree. The center must not delete that tree while any row
+// still renders one of those files.
+function archiveReferencesLegacy(raw, legacyDir) {
+  var dir = String(legacyDir || "")
+  if (dir === "") return false
+  return String(raw || "").indexOf(dir) !== -1
+}
+
 // ---- settings ------------------------------------------------------------
 
 function parseSettings(raw) {
@@ -225,9 +250,13 @@ function parseCenterState(raw) {
     lastSeen: 0, placement: "top-right", mode: "window",
     marginX: 12, marginY: 12, padding: 12, cardSpacing: 10, confirmClear: true,
     screens: [], screensLegacy: false, captureToasts: true,
-    allowExecActions: true, dndBypass: true
+    allowExecActions: true, dndBypass: true,
+    enterOpens: "app", shortcutBar: true, hideBodies: false,
+    showPreviews: true, showBadge: true,
+    searchKey: "/", dndKey: "d", detailKey: "i", helpKey: "?", settingsKey: "s"
   }
   function clampInt(value, fallbackValue, min, max) {
+    if (value === null || value === undefined || value === "") return fallbackValue
     var n = Number(value)
     if (!isFinite(n)) n = fallbackValue
     return Math.max(min, Math.min(max, Math.round(n)))
@@ -278,7 +307,8 @@ function parseCenterState(raw) {
       searchKey: (parsed && parsed.searchKey === "ctrl+f") ? "ctrl+f" : "/",
       dndKey: (parsed && parsed.dndKey === "D") ? "D" : "d",
       detailKey: (parsed && parsed.detailKey === "I") ? "I" : "i",
-      helpKey: (parsed && parsed.helpKey === "F1") ? "F1" : "?"
+      helpKey: (parsed && parsed.helpKey === "F1") ? "F1" : "?",
+      settingsKey: (parsed && parsed.settingsKey === "P") ? "P" : "s"
     }
   } catch (e) {
     return fallback
@@ -288,7 +318,9 @@ function parseCenterState(raw) {
 // ---- presentation --------------------------------------------------------
 
 function timeAgo(ts, now) {
-  var diff = Math.max(0, Number(now) - Number(ts))
+  var value = Number(ts)
+  if (!isFinite(value) || value <= 0) return ""
+  var diff = Math.max(0, Number(now) - value)
   if (diff < 45000) return "just now"
   var m = Math.floor(diff / 60000)
   if (m < 60) return m + "m ago"
@@ -330,7 +362,8 @@ function engineEnabledFromShellConfig(raw, engineId) {
 function manifestVersion(raw) {
   try {
     var value = JSON.parse(String(raw || ""))
-    return value && typeof value === "object" ? String(value.version || "") : ""
+    if (!value || typeof value !== "object") return ""
+    return String(value.version || "").slice(0, 32)
   } catch (e) {
     return ""
   }
@@ -375,8 +408,8 @@ function versionAtLeast(value, minimum) {
 function emptyEntry() {
   return {
     id: 0, originalId: 0, app: "", appIcon: "", summary: "", body: "",
-    image: "", glyph: "", execArgv: "", urgency: 1, timestamp: 0,
-    stem: "", source: "history"
+    image: "", glyph: "", urgency: 1, timestamp: 0,
+    stem: "", source: "history", searchText: ""
   }
 }
 
@@ -392,11 +425,13 @@ if (typeof module !== "undefined") {
     safeAppIcon: safeAppIcon,
     imageStem: imageStem,
     engineEnabledFromShellConfig: engineEnabledFromShellConfig,
+    archiveReferencesLegacy: archiveReferencesLegacy,
     legacyCleanupAction: legacyCleanupAction,
     manifestVersion: manifestVersion,
     versionAtLeast: versionAtLeast,
     styledSanitizedBody: styledSanitizedBody,
     styledBody: styledBody,
+    parseRow: parseRow,
     parseEntries: parseEntries,
     parseArchive: parseArchive,
     clipText: clipText,
@@ -404,7 +439,9 @@ if (typeof module !== "undefined") {
       app: MAX_APP_LENGTH,
       glyph: MAX_GLYPH_LENGTH,
       summary: MAX_SUMMARY_LENGTH,
-      body: MAX_BODY_LENGTH
+      body: MAX_BODY_LENGTH,
+      image: MAX_IMAGE_LENGTH,
+      icon: MAX_ICON_LENGTH,
     },
     mergeEntries: mergeEntries,
     signature: signature,

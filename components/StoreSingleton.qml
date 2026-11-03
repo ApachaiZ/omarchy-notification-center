@@ -1,14 +1,17 @@
+pragma Singleton
 import QtQuick
 import Quickshell
 import Quickshell.Io
-import "Model.js" as Model
+import "../Model.js" as Model
 
 // Data half of the notification center: everything the bar bell needs
 // (unread count, DND state) plus the live/history merge and the action queue.
 //
-// Kept in its own object so the UI in Panel.qml can stay unloaded until the
-// user actually opens the center. One Store exists per bar instance and is
-// inert (no visible item, width/height 0) — the visible cost is zero.
+// This is a QML singleton on purpose. Omarchy builds one bar per monitor, and
+// a per-bar store meant one set of file watches, polls, action queues and
+// state writers per screen — including concurrent writes to the same state
+// file. A single shared store keeps every bell in sync and does the I/O once.
+// It is inert (no visible item, width/height 0).
 Item {
   id: store
   visible: false
@@ -32,6 +35,7 @@ Item {
   // its retention.
   readonly property string legacyDir: home + "/.local/state/omarchy/notifications-center"
 
+  readonly property int archiveRetentionDays: 30
   property bool dnd: false
   property double lastSeen: 0
   property bool centerStateLoaded: false
@@ -117,6 +121,8 @@ Item {
 
   property bool legacyCleanupStarted: false
   property bool legacyCleanupDelegated: false
+  property bool legacyCleanupSkipped: false
+  property bool archiveFileLoaded: false
   property bool engineEnabled: false
   property string engineVersion: ""
   property bool engineManifestLoaded: false
@@ -133,7 +139,15 @@ Item {
   // shell.json and the engine manifest so the decision is based on
   // configuration and version.
   function cleanupLegacyArchive() {
-    if (!store.shellConfigLoaded || !store.engineManifestLoaded) return
+    if (!store.shellConfigLoaded || !store.engineManifestLoaded || !store.archiveFileLoaded) return
+    if (store.legacyCleanupSkipped) return
+    // A migrated archive can still point at image copies inside the legacy
+    // tree. Deleting the tree then leaves broken previews, so keep it until
+    // the archive no longer references it.
+    if (Model.archiveReferencesLegacy(store.lastArchiveRaw, store.legacyDir)) {
+      store.legacyCleanupSkipped = true
+      return
+    }
     var action = Model.legacyCleanupAction(store.engineEnabled,
       store.engineVersionSafe, store.legacyCleanupStarted, store.legacyCleanupDelegated)
     if (action === "done") return
@@ -185,21 +199,27 @@ Item {
   }
 
   function onArchiveLoaded(raw) {
-    if (raw === store.lastArchiveRaw) return
+    store.archiveFileLoaded = true
+    if (raw === store.lastArchiveRaw) {
+      store.cleanupLegacyArchive()
+      return
+    }
     store.lastArchiveRaw = raw
     store.archiveFileEntries = store.filterSuppressed(Model.parseArchive(raw))
     store.rebuildArchive()
+    store.cleanupLegacyArchive()
   }
 
   function rebuildArchive() {
     // The engine writes one archive JSON; the stock service writes one file
     // per entry under history/. Merge both so the center works with either.
-    store.archiveEntries = Model.mergeEntries(store.archiveFileEntries, store.historyEntries)
+    store.archiveEntries = store.filterSuppressed(
+      Model.mergeEntries(store.archiveFileEntries, store.historyEntries))
     store.rebuildEntries()
   }
 
   function rebuildEntries() {
-    var merged = Model.mergeEntries(store.liveEntries, store.archiveEntries)
+    var merged = store.filterSuppressed(Model.mergeEntries(store.liveEntries, store.archiveEntries))
     var sig = Model.signature(merged)
     if (sig === store.mergeSignature) return
     store.entries = merged
@@ -249,7 +269,7 @@ Item {
         store.scheduleCenterStateSave()
       }
     } else if (parsed.lastSeen > 0) {
-      store.lastSeen = parsed.lastSeen
+      store.lastSeen = Math.max(store.lastSeen, parsed.lastSeen)
     }
     store.placement = parsed.placement
     store.mode = parsed.mode
@@ -629,6 +649,7 @@ Item {
   function deleteEntry(entry) {
     if (!entry || !entry.stem) return
     var stem = String(entry.stem)
+    if (!/^[0-9]+-[0-9]+$/.test(stem)) return
     store.suppress(stem, 3000)
     // The engine's `forget` IPC removes an archive entry. The stock service
     // ignores it and only knows its per-file history, so with the engine
@@ -637,23 +658,28 @@ Item {
     // the engine is off, so it can never race a live engine writer.
     var direct = store.shellConfigLoaded && !store.engineEnabled
     store.enqueueAction(["bash", "-c",
-      "omarchy-shell -q notifications dismiss \"$2\" || true\n" +
-      "omarchy-shell -q notifications forget \"$3\" >/dev/null 2>&1 || true\n" +
+      "if [[ \"$5\" == \"engine\" ]]; then\n" +
+      "  omarchy-shell -q notifications dismissStem \"$2\" >/dev/null 2>&1 || true\n" +
+      "fi\n" +
+      "omarchy-shell -q notifications forget \"$2\" >/dev/null 2>&1 || true\n" +
       "sleep 0.3\n" +
-      "rm -f \"$1/$3.json\" \"$1/history/$3.json\" \"$1/images/$3\"-*\n" +
-      "if [[ \"$4\" == \"direct\" && -f \"$5\" ]] && command -v jq >/dev/null 2>&1; then\n" +
+      "rm -f \"$1/$2.json\" \"$1/history/$2.json\" \"$1/images/$2\"-*\n" +
+      "if [[ \"$3\" == \"direct\" && -f \"$4\" ]] && command -v jq >/dev/null 2>&1; then\n" +
       "  umask 077\n" +
-      "  tmp=\"$5.tmp\"\n" +
-      "  jq --arg stem \"$3\" 'if (.entries|type)==\"array\" then .entries |= map(select(.stem != $stem)) else . end' \"$5\" > \"$tmp\" && chmod 600 \"$tmp\" && mv -f \"$tmp\" \"$5\" || rm -f \"$tmp\"\n" +
+      "  tmp=\"$(mktemp \"$4.XXXXXX\")\" || exit 0\n" +
+      "  jq --arg stem \"$2\" 'def rowstem: (.stem // (((.timestamp // 0) | tostring) + \"-\" + ((.originalId // .id // 0) | tostring))); if type==\"object\" and (.entries|type)==\"array\" then .entries |= map(select(rowstem != $stem)) elif type==\"array\" then map(select(rowstem != $stem)) else . end' \"$4\" > \"$tmp\" && chmod 600 \"$tmp\" && mv -f \"$tmp\" \"$4\" || { rm -f \"$tmp\"; exit 1; }\n" +
       "fi",
-      "--", store.stateDir, String(entry.summary || ""), stem,
-      direct ? "direct" : "ipc", store.archivePath])
+      "--", store.stateDir, stem,
+      direct ? "direct" : "ipc", store.archivePath,
+      store.engineEnabled ? "engine" : "stock"])
     store.removeLocal(stem)
   }
 
   function removeLocal(stem) {
     var keep = function(e) { return e.stem !== stem }
     store.liveEntries = store.liveEntries.filter(keep)
+    store.archiveFileEntries = store.archiveFileEntries.filter(keep)
+    store.historyEntries = store.historyEntries.filter(keep)
     store.archiveEntries = store.archiveEntries.filter(keep)
     store.rebuildEntries()
   }
@@ -666,15 +692,15 @@ Item {
       'omarchy-shell -q notifications dismissAll || true\n' +
       'omarchy-shell -q notifications clear || true\n' +
       'rm -rf -- "$1"\n' +
-      'if [[ "$2" == "direct" && -f "$3" ]] && command -v jq >/dev/null 2>&1; then\n' +
-      '  umask 077\n' +
-      '  tmp="$3.tmp"\n' +
-      '  jq \'if (.entries|type)=="array" then .entries = [] else . end\' "$3" > "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$3" || rm -f "$tmp"\n' +
-      'fi\n' +
-      '[[ "$2" == "direct" ]] && rm -f "$4"/*',
+      'if [[ "$2" == "direct" ]]; then\n' +
+      '  rm -f -- "$3"\n' +
+      '  rm -f -- "$4"/*\n' +
+      'fi',
       "--", store.legacyDir, direct ? "direct" : "ipc", store.archivePath,
       store.stateDir + "/images"])
     store.liveEntries = []
+    store.archiveFileEntries = []
+    store.historyEntries = []
     store.archiveEntries = []
     store.entries = []
     store.mergeSignature = ""
@@ -682,8 +708,10 @@ Item {
   }
 
   function toggleDnd() {
+    // Flip locally so every bell responds immediately; the service writes
+    // its debounced settings file and the watcher confirms (or corrects) it.
+    store.dnd = !store.dnd
     store.enqueueAction(["omarchy-shell", "-q", "notifications", "toggleDnd"])
-    // The active service debounces its settings write; sync again shortly.
     dndSyncTimer.restart()
   }
 
@@ -730,7 +758,12 @@ Item {
   Process {
     id: actionProc
     stdout: StdioCollector { waitForEnd: true }
-    onExited: store.runNextAction()
+    stderr: StdioCollector { id: actionErr; waitForEnd: true }
+    onExited: function(code) {
+      if (code !== 0 && actionErr.text !== "")
+        console.warn("notifications: action failed:", actionErr.text)
+      store.runNextAction()
+    }
   }
 
   // ---- files & timers ----
@@ -738,11 +771,12 @@ Item {
   FileView {
     id: settingsFile
     path: store.settingsPath
-    watchChanges: false
+    watchChanges: true
     atomicWrites: false
     printErrors: false
     onLoaded: store.dnd = Model.parseSettings(text()).dnd
     onLoadFailed: store.dnd = false
+    onFileChanged: reload()
   }
 
   FileView {

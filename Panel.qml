@@ -6,11 +6,12 @@ import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
+import "components"
 
-// Notification center panel. Data comes from the files the shell's own
+// Notification center panel. Data comes from the files the active
 // notification service persists (live popups at the state root, archived
-// entries under history/), so the center sees exactly what the toasts do —
-// including notifications silenced by Do Not Disturb.
+// entries under history/ or the engine archive), so the center sees exactly
+// what the toasts do — including notifications silenced by Do Not Disturb.
 //
 // Actions reach the live service through its IPC surface (omarchy-shell):
 // dismissal, clear-history and DND toggle, plus a direct rm of the
@@ -27,7 +28,7 @@ Panel {
   property string hostScreenName: ""
   readonly property var barIdentity: hostWidget || root
 
-  // Data lives in Store.qml so this UI can stay unloaded while the center is
+  // Data lives in the shared StoreSingleton so this UI can stay unloaded while the center is
   // closed. Entries/DND/unread below are read-only views of that store.
   property var store: null
   readonly property var entries: store ? store.entries : []
@@ -40,13 +41,16 @@ Panel {
   // arrow press activates it; mouse hover moves it too, so mouse and
   // keyboard share one selection like the bluetooth panel does.
   property int cursorIndex: -1
+  // Identity of the cursor row. Entries arrive at the front, so an index
+  // alone would slide the destructive target onto a different notification.
+  property string cursorStem: ""
   property string query: ""
   property bool searchOpen: false
   property bool clearArmed: false
   property bool helpOpen: false
   property int settingsCursor: 0
+  property int settingsCategory: 0
   property int screenCursor: 0
-  readonly property int settingsRowCount: 25
   readonly property var screenList: Quickshell.screens
   readonly property var centerScreens: {
     var screens = Quickshell.screens
@@ -63,6 +67,99 @@ Panel {
   // never grows past the monitor.
   property real windowAvailableH: 800
 
+  readonly property bool horizontal: root.store ? root.store.mode === "horizontal" : false
+  readonly property bool footerVisible: root.store ? root.store.shortcutBar : true
+  readonly property real compactWidth: Style.space(300)
+
+  // Settings are grouped into categories. The navigation rail is the menu;
+  // the focused category is the submenu. `settingsIndex` gives both the
+  // keyboard state machine and the view one shared set of row numbers.
+  readonly property var settingsIndex: ({
+    mode: 0,
+    marginX: 1,
+    marginY: 2,
+    padding: 3,
+    cardSpacing: 4,
+    placement: 5,
+    centerScreen: 6,
+    screens: 7,
+    enterOpens: 8,
+    shortcutBar: 9,
+    hideBodies: 10,
+    showPreviews: 11,
+    showBadge: 12,
+    captureToasts: 13,
+    searchKey: 14,
+    dndKey: 15,
+    detailKey: 16,
+    helpKey: 17,
+    settingsKey: 18,
+    allowExecActions: 19,
+    dndBypass: 20,
+    installEngine: 21,
+    barSection: 22,
+    barIndex: 23,
+    confirmClear: 24,
+    clearHistory: 25
+  })
+  readonly property var settingsCategories: [
+    {
+      id: "layout",
+      label: "Layout",
+      glyph: "󰕮",
+      description: "Presentation, size and spacing",
+      rows: [0, 1, 2, 3, 4]
+    },
+    {
+      id: "position",
+      label: "Position",
+      glyph: "󰍹",
+      description: "Where the center appears on screen",
+      rows: [5, 6, 7]
+    },
+    {
+      id: "notifications",
+      label: "Notifications",
+      glyph: "󰂚",
+      description: "Content, privacy and behavior",
+      rows: [8, 9, 10, 11, 12, 13]
+    },
+    {
+      id: "shortcuts",
+      label: "Shortcuts",
+      glyph: "󰌌",
+      description: "Keys that drive the center",
+      rows: [14, 15, 16, 17, 18]
+    },
+    {
+      id: "engine",
+      label: "Engine",
+      glyph: "󰒓",
+      description: "Service policies and installation",
+      rows: [19, 20, 21]
+    },
+    {
+      id: "bar",
+      label: "Bar icon",
+      glyph: "󰅌",
+      description: "Position of the bell in the bar",
+      rows: [22, 23]
+    },
+    {
+      id: "data",
+      label: "Data",
+      glyph: "󰆴",
+      description: "Confirmation and history cleanup",
+      rows: [24, 25]
+    }
+  ]
+  readonly property var currentCategory: {
+    var list = root.settingsCategories
+    if (list.length === 0) return ({ label: "", description: "", rows: [] })
+    var index = Math.max(0, Math.min(root.settingsCategory, list.length - 1))
+    return list[index]
+  }
+
   function activeSearchField() {
     return root.activeContent ? root.activeContent.searchField : null
   }
@@ -76,8 +173,12 @@ Panel {
       root.activeContent.keyCatcher.forceActiveFocus()
   }
 
-  readonly property bool horizontal: root.store ? root.store.mode === "horizontal" : false
-  readonly property bool footerVisible: root.store ? root.store.shortcutBar : true
+  // The scroll helper lives on the instantiated content item, not on Panel:
+  // the host owns state, the per-screen content owns geometry.
+  function scrollSettingsCursorIntoView() {
+    if (root.activeContent && typeof root.activeContent.scrollSettingsCursorIntoView === "function")
+      root.activeContent.scrollSettingsCursorIntoView()
+  }
 
   function keyLabel(value) {
     if (value === "ctrl+f") return "Ctrl+F"
@@ -87,21 +188,110 @@ Panel {
     return String(value || "")
   }
 
-  function shortcutHint() {
-    if (root.settingsOpen)
-      return "↑↓ / jk move · ←→ / hl adjust · Enter apply · Esc back"
-    if (root.helpOpen)
-      return "Esc close · " + keyLabel(root.store ? root.store.helpKey : "?") + " toggle help"
-    var enter = root.store && root.store.enterOpens === "detail" ? "Enter details" : "Enter open"
-    return "↑↓ / jk select · " + enter + " · " + keyLabel(root.store ? root.store.detailKey : "i") + " details · "
-      + (root.store ? keyLabel(root.store.searchKey) : "/") + " search · "
-      + keyLabel(root.store ? root.store.dndKey : "d") + " DND · "
-      + keyLabel(root.store ? root.store.settingsKey : "s") + " settings · "
-      + keyLabel(root.store ? root.store.helpKey : "?") + " help"
+  function headerTitle() {
+    if (root.settingsOpen) return "Settings"
+    if (root.helpOpen) return "Shortcuts"
+    if (root.selectedEntry !== null) return "Notification"
+    if (root.searchOpen) return "Search"
+    return "Notifications"
   }
-  // Horizontal cards grow to share the band when there are few, and stop at
-  // a readable width; the row centers itself when it does not fill.
 
+  function headerSubtitle() {
+    if (root.settingsOpen) {
+      var label = root.currentCategory && root.currentCategory.label
+        ? root.currentCategory.label : "Settings"
+      return label + " · Tab switches section"
+    }
+    if (root.helpOpen) return "Keyboard reference"
+    if (root.searchOpen) {
+      if (root.query === "") return "Type to search app, title or body"
+      var results = root.matchedEntries.length
+      return results + " result" + (results === 1 ? "" : "s") + " for \"" + root.query + "\""
+    }
+    if (root.selectedEntry !== null) {
+      var app = String(root.selectedEntry.app || "")
+      return (app !== "" ? app + " · " : "") + root.detailTime(root.selectedEntry)
+    }
+    var parts = []
+    if (root.dnd) parts.push("Do Not Disturb")
+    if (root.unseenCount > 0) parts.push(root.unseenCount + " unread")
+    if (root.entries.length > 0) parts.push(root.entries.length + " saved")
+    return parts.length > 0 ? parts.join(" · ") : "All caught up"
+  }
+
+  function hintItems() {
+    if (root.settingsOpen) {
+      return [
+        { key: "Tab", label: "Section" },
+        { key: "↑↓", label: "Row" },
+        { key: "←→", label: "Adjust" },
+        { key: "Enter", label: "Apply" },
+        { key: "Esc", label: "Back" }
+      ]
+    }
+    if (root.helpOpen) {
+      return [
+        { key: "Esc", label: "Close" },
+        { key: root.keyLabel(root.store ? root.store.helpKey : "?"), label: "Toggle help" }
+      ]
+    }
+    if (root.searchOpen) {
+      return [
+        { key: "↑↓", label: "Results" },
+        { key: "Enter", label: "Open" },
+        { key: "Esc", label: "Cancel" }
+      ]
+    }
+    if (root.selectedEntry !== null) {
+      return [
+        { key: "Esc", label: "Back" },
+        { key: "o", label: "Open app" },
+        { key: "x", label: "Dismiss" }
+      ]
+    }
+    // Arrows and Enter are taught by the help view; the main list footer
+    // keeps only the actions whose shortcuts are not obvious.
+    return [
+      { key: root.keyLabel(root.store ? root.store.detailKey : "i"), label: "Details" },
+      { key: root.keyLabel(root.store ? root.store.searchKey : "/"), label: "Search" },
+      { key: root.keyLabel(root.store ? root.store.dndKey : "d"), label: "DND" },
+      { key: root.keyLabel(root.store ? root.store.settingsKey : "s"), label: "Settings" },
+      { key: root.keyLabel(root.store ? root.store.helpKey : "?"), label: "Help" }
+    ]
+  }
+
+  readonly property var helpGroups: {
+    var enter = root.store && root.store.enterOpens === "detail"
+      ? "Open the detail view" : "Focus the sending app"
+    return [
+      {
+        title: "Navigate",
+        items: [
+          { key: "↑↓ / jk", label: "Move the cursor" },
+          { key: "g / G", label: "First / last notification" },
+          { key: "Esc", label: "Back, then close the center" }
+        ]
+      },
+      {
+        title: "Actions",
+        items: [
+          { key: "Enter", label: enter },
+          { key: root.keyLabel(root.store ? root.store.detailKey : "i"), label: "Open the detail view" },
+          { key: "x", label: "Dismiss the selected notification" },
+          { key: "Shift+C", label: "Clear all notifications" }
+        ]
+      },
+      {
+        title: "Views",
+        items: [
+          { key: root.keyLabel(root.store ? root.store.searchKey : "/"), label: "Search app, title and body" },
+          { key: root.keyLabel(root.store ? root.store.settingsKey : "s"), label: "Open settings" },
+          { key: root.keyLabel(root.store ? root.store.dndKey : "d"), label: "Toggle Do Not Disturb" },
+          { key: root.keyLabel(root.store ? root.store.helpKey : "?"), label: "Show or hide this reference" }
+        ]
+      }
+    ]
+  }
 
   // Filtered view used by the list, the cursor and every keyboard action.
   readonly property var matchedEntries: {
@@ -110,29 +300,72 @@ Panel {
     var out = []
     for (var i = 0; i < root.entries.length; i++) {
       var e = root.entries[i]
-      var hay = (String(e.app) + "\n" + String(e.summary) + "\n" + String(e.body)).toLowerCase()
+      var hay = e.searchText !== undefined
+        ? e.searchText
+        : (String(e.app) + "\n" + String(e.summary) + "\n" + String(e.body)).toLowerCase()
       if (hay.indexOf(q) !== -1) out.push(e)
     }
     return out
   }
 
-  // Flat rows for the two virtualized lists. The day label travels with each
-  // row so the vertical ListView can draw section headers without a nested
-  // model; only delegates inside the viewport are instantiated.
-  readonly property var listModel: {
-    var out = []
+  // Flat rows for the virtualized lists, plus the count for each day header.
+  // Building both in one pass keeps the section headers from rewalking the
+  // whole archive on every change.
+  readonly property var listData: {
+    var rows = []
+    var counts = ({})
     for (var i = 0; i < root.matchedEntries.length; i++) {
       var item = root.matchedEntries[i]
-      out.push({ entry: item, index: i, day: root.dayLabel(item.timestamp) })
+      var day = root.dayLabel(item.timestamp)
+      counts[day] = (counts[day] || 0) + 1
+      rows.push({ entry: item, index: i, day: day })
     }
-    return out
+    return { rows: rows, counts: counts }
+  }
+  readonly property var listModel: listData.rows
+  readonly property var dayCounts: listData.counts
+
+  function isUnread(entry) {
+    return !!entry && !!root.store && Number(entry.timestamp) > Number(root.store.lastSeen || 0)
   }
 
-  function previewSource(entry) {
+  function iconSource(icon) {
+    var value = String(icon || "")
+    if (value.length === 0) return ""
+    if (value.indexOf("file://") === 0 || value.indexOf("image://") === 0) return value
+    if (value.charAt(0) === "/") return Util.fileUrl(value)
+    if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(value)) return ""
+    return Quickshell.iconPath(value, true)
+  }
+
+  // Prefer app identity in the small icon plate. A notification image is a
+  // fallback only when previews are allowed and the sender supplied no icon;
+  // the full artwork belongs in the detail view, not in the list.
+  function entryIcon(entry) {
     if (!entry) return ""
-    var useImage = !root.store || root.store.showPreviews !== false
+    var icon = String(entry.appIcon || "")
+    if (icon !== "") return root.iconSource(icon)
+    if (root.store && root.store.showPreviews === false) return ""
     var image = Model.safeImageSource(entry.image)
-    return useImage && image.length > 0 ? image : entry.appIcon
+    return image !== "" ? root.iconSource(image) : ""
+  }
+
+  function previewImage(entry) {
+    if (!entry) return ""
+    if (root.store && root.store.showPreviews === false) return ""
+    return Model.safeImageSource(entry.image)
+  }
+
+  function bodyText(entry) {
+    if (!entry) return ""
+    if (root.store && root.store.hideBodies) return ""
+    return Model.styledBody(entry.body, entry.app, entry.appIcon)
+  }
+
+  function detailTime(entry) {
+    if (!entry || !entry.timestamp) return ""
+    var date = new Date(Number(entry.timestamp))
+    return Qt.formatDateTime(date, "ddd d MMM yyyy · HH:mm")
   }
 
   function dayLabel(ts) {
@@ -149,7 +382,6 @@ Panel {
 
   readonly property color fg: bar ? bar.foreground : Commons.Color.foreground
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
-  readonly property int cornerRadius: Style.cornerRadius
 
   // Null-safe view for the detail bindings.
   readonly property var entry: root.selectedEntry !== null ? root.selectedEntry : Model.emptyEntry()
@@ -162,10 +394,10 @@ Panel {
     root.searchOpen = false
     root.query = ""
     root.clearArmed = false
-    if (root.store) {
-      root.store.reloadState()
-      root.store.refresh()
-    }
+    clearArmTimer.stop()
+    root.selectedEntry = null
+    root.cursorIndex = -1
+    if (root.store) root.store.reloadState()
     root.controller.show()
   }
 
@@ -176,8 +408,11 @@ Panel {
     root.searchOpen = false
     root.query = ""
     root.clearArmed = false
+    clearArmTimer.stop()
     root.selectedEntry = null
     root.cursorIndex = -1
+    root.settingsCategory = 0
+    root.settingsCursor = 0
     if (root.store) root.store.markSeen()
   }
 
@@ -187,6 +422,11 @@ Panel {
     if (root.bar && typeof root.bar.switchPanelFrom === "function")
       return root.bar.switchPanelFrom(root.barIdentity, direction)
     return false
+  }
+
+  onCursorIndexChanged: {
+    root.cursorStem = (root.cursorIndex >= 0 && root.cursorIndex < root.matchedEntries.length)
+      ? String(root.matchedEntries[root.cursorIndex].stem) : ""
   }
 
   onOpenedChanged: {
@@ -201,18 +441,34 @@ Panel {
   Connections {
     target: root.store
     function onEntriesChanged() {
+      var keepStem = root.cursorStem
+      var keepIndex = root.cursorIndex
       root.clampCursor()
+      if (keepStem !== "") {
+        var found = -1
+        for (var i = 0; i < root.matchedEntries.length; i++) {
+          if (String(root.matchedEntries[i].stem) === keepStem) { found = i; break }
+        }
+        if (found !== -1) root.cursorIndex = found
+        else root.cursorIndex = Math.min(keepIndex, root.matchedEntries.length - 1)
+      }
+      if (root.cursorIndex >= 0 && root.cursorIndex < root.matchedEntries.length)
+        root.cursorStem = String(root.matchedEntries[root.cursorIndex].stem)
+      else
+        root.cursorStem = ""
+
       if (root.selectedEntry !== null && root.store) {
         var stem = String(root.selectedEntry.stem)
-        var found = false
-        for (var i = 0; i < root.store.entries.length; i++)
-          if (String(root.store.entries[i].stem) === stem) { found = true; break }
-        if (!found) root.selectedEntry = null
+        var refreshed = null
+        for (var j = 0; j < root.store.entries.length; j++) {
+          if (String(root.store.entries[j].stem) === stem) { refreshed = root.store.entries[j]; break }
+        }
+        root.selectedEntry = refreshed
       }
     }
   }
 
-  // ---- actions (state changes live in Store.qml) ----
+  // ---- actions (state changes live in the shared StoreSingleton) ----
 
   function deleteEntry(entry) {
     if (!entry || !root.store) return
@@ -232,11 +488,30 @@ Panel {
     root.clearArmed = false
   }
 
+  function requestClear() {
+    if (!root.store) return
+    if (!root.store.confirmClear) {
+      root.clearArmed = false
+      root.clearAll()
+      return
+    }
+    if (root.clearArmed) {
+      root.clearArmed = false
+      clearArmTimer.stop()
+      root.clearAll()
+      return
+    }
+    root.clearArmed = true
+    clearArmTimer.restart()
+  }
+
+  function handleClearShortcut() { root.requestClear() }
+
   function toggleDnd() {
     if (root.store) root.store.toggleDnd()
   }
 
-  // ---- settings ----
+  // ---- bar placement ----
 
   readonly property string placementVertical: root.store ? root.store.placement.split("-")[0] : "top"
   readonly property string placementHorizontal: root.store ? root.store.placement.split("-")[1] : "right"
@@ -273,8 +548,8 @@ Panel {
     stdout: StdioCollector { waitForEnd: true }
   }
 
-  // Clicking a card focuses the application that sent the notification. The
-  // helper matches Hyprland window classes case-insensitively; archived
+  // Clicking "Open app" focuses the application that sent the notification.
+  // The helper matches Hyprland window classes case-insensitively; archived
   // notifications have no live default action, so focusing the sender is the
   // safe equivalent of "open the notification".
   property var pendingActivation: null
@@ -305,6 +580,8 @@ Panel {
     focusAppProc.running = true
   }
 
+  // ---- settings navigation ----
+
   function openSettings() {
     if (!root.opened) root.open()
     root.helpOpen = false
@@ -313,7 +590,8 @@ Panel {
     root.query = ""
     root.clearArmed = false
     root.settingsOpen = true
-    root.settingsCursor = 0
+    root.settingsCategory = 0
+    root.settingsCursor = root.settingsCategories[0].rows[0]
     root.screenCursor = 0
     var screens = root.screenList
     for (var i = 0; i < screens.length; i++) {
@@ -322,11 +600,46 @@ Panel {
         break
       }
     }
+    Qt.callLater(function() { root.scrollSettingsCursorIntoView() })
+  }
+
+  function selectSettingsCategory(index) {
+    if (index < 0 || index >= root.settingsCategories.length) return
+    root.settingsCategory = index
+    root.settingsCursor = root.settingsCategories[index].rows[0]
+    Qt.callLater(function() {
+      root.scrollSettingsCursorIntoView()
+      var view = root.activeScrollView()
+      if (view) view.contentY = 0
+    })
+  }
+
+  function switchSettingsCategory(delta) {
+    var count = root.settingsCategories.length
+    if (count === 0) return
+    var step = delta >= 0 ? 1 : -1
+    root.selectSettingsCategory((root.settingsCategory + step + count) % count)
+  }
+
+  function focusSetting(row) {
+    if (row === undefined || row === null || row < 0) return
+    root.settingsCursor = row
+    for (var i = 0; i < root.settingsCategories.length; i++) {
+      if (root.settingsCategories[i].rows.indexOf(row) !== -1) {
+        root.settingsCategory = i
+        return
+      }
+    }
   }
 
   function moveSettingsCursor(dy) {
     if (dy === 0) return
-    root.settingsCursor = (root.settingsCursor + dy + root.settingsRowCount) % root.settingsRowCount
+    var rows = root.currentCategory && root.currentCategory.rows ? root.currentCategory.rows : []
+    if (rows.length === 0) return
+    var position = rows.indexOf(root.settingsCursor)
+    if (position === -1) position = 0
+    else position = Math.max(0, Math.min(rows.length - 1, position + dy))
+    root.settingsCursor = rows[position]
     if (root.activeContent) root.activeContent.scrollSettingsCursorIntoView()
   }
 
@@ -367,54 +680,112 @@ Panel {
   function adjustSettings(delta) {
     if (!root.store || delta === 0) return
     var step = delta > 0 ? 1 : -1
+    var index = root.settingsIndex
+    var modes
+    var modeIndex
+    var sections
+    var sectionIndex
+
     switch (root.settingsCursor) {
-    case 0:
-      var modes = ["window", "horizontal", "vertical"]
-      var mi = modes.indexOf(root.store.mode)
-      root.store.setMode(modes[(mi + step + modes.length) % modes.length])
+    case index.mode:
+      modes = ["window", "horizontal", "vertical"]
+      modeIndex = modes.indexOf(root.store.mode)
+      root.store.setMode(modes[(modeIndex + step + modes.length) % modes.length])
       break
-    case 1: root.store.setMargin("x", root.store.marginX + step * 4); break
-    case 2: root.store.setMargin("y", root.store.marginY + step * 4); break
-    case 3: root.store.setPadding(root.store.padding + step * 2); break
-    case 4: root.store.setCardSpacing(root.store.cardSpacing + step * 2); break
-    case 5: root.cyclePlacement(delta); break
-    case 7: root.cycleScreen(step); break
-    case 8:
-      var sections = ["left", "center", "right"]
-      var si = sections.indexOf(root.store.barSection)
-      if (si === -1) si = 0
-      root.moveBarSection(sections[(si + step + sections.length) % sections.length])
+    case index.marginX:
+      root.store.setMargin("x", root.store.marginX + step * 4)
       break
-    case 9: root.stepBarIndex(step); break
-    case 10: root.store.setConfirmClear(root.store.confirmClear ? false : true); break
-    case 11: root.store.setHideBodies(!root.store.hideBodies); break
-    case 12: root.store.setShowPreviews(!root.store.showPreviews); break
-    case 13: root.store.setShowBadge(!root.store.showBadge); break
-    case 14: root.store.setCaptureToasts(!root.store.captureToasts); break
-    case 15: root.store.setEnterOpens(root.store.enterOpens === "app" ? "detail" : "app"); break
-    case 16: root.store.setShortcutBar(!root.store.shortcutBar); break
-    case 17: root.store.setSearchKey(root.store.searchKey === "ctrl+f" ? "/" : "ctrl+f"); break
-    case 18: root.store.setDndKey(root.store.dndKey === "D" ? "d" : "D"); break
-    case 19: root.store.setDetailKey(root.store.detailKey === "I" ? "i" : "I"); break
-    case 20: root.store.setHelpKey(root.store.helpKey === "F1" ? "?" : "F1"); break
-    case 21: root.store.setSettingsKey(root.store.settingsKey === "P" ? "s" : "P"); break
-    case 22: root.store.installEngine(); break
-    case 23: root.store.setAllowExecActions(!root.store.allowExecActions); break
-    case 24: root.store.setDndBypass(!root.store.dndBypass); break
+    case index.marginY:
+      root.store.setMargin("y", root.store.marginY + step * 4)
+      break
+    case index.padding:
+      root.store.setPadding(root.store.padding + step * 2)
+      break
+    case index.cardSpacing:
+      root.store.setCardSpacing(root.store.cardSpacing + step * 2)
+      break
+    case index.placement:
+      root.cyclePlacement(delta)
+      break
+    case index.centerScreen:
+      break
+    case index.screens:
+      root.cycleScreen(step)
+      break
+    case index.enterOpens:
+      root.store.setEnterOpens(root.store.enterOpens === "app" ? "detail" : "app")
+      break
+    case index.shortcutBar:
+      root.store.setShortcutBar(!root.store.shortcutBar)
+      break
+    case index.hideBodies:
+      root.store.setHideBodies(!root.store.hideBodies)
+      break
+    case index.showPreviews:
+      root.store.setShowPreviews(!root.store.showPreviews)
+      break
+    case index.showBadge:
+      root.store.setShowBadge(!root.store.showBadge)
+      break
+    case index.captureToasts:
+      root.store.setCaptureToasts(!root.store.captureToasts)
+      break
+    case index.searchKey:
+      root.store.setSearchKey(root.store.searchKey === "ctrl+f" ? "/" : "ctrl+f")
+      break
+    case index.dndKey:
+      root.store.setDndKey(root.store.dndKey === "D" ? "d" : "D")
+      break
+    case index.detailKey:
+      root.store.setDetailKey(root.store.detailKey === "I" ? "i" : "I")
+      break
+    case index.helpKey:
+      root.store.setHelpKey(root.store.helpKey === "F1" ? "?" : "F1")
+      break
+    case index.settingsKey:
+      root.store.setSettingsKey(root.store.settingsKey === "P" ? "s" : "P")
+      break
+    case index.allowExecActions:
+      root.store.setAllowExecActions(!root.store.allowExecActions)
+      break
+    case index.dndBypass:
+      root.store.setDndBypass(!root.store.dndBypass)
+      break
+    case index.installEngine:
+      break
+    case index.barSection:
+      sections = ["left", "center", "right"]
+      sectionIndex = sections.indexOf(root.store.barSection)
+      if (sectionIndex === -1) sectionIndex = 0
+      root.moveBarSection(sections[(sectionIndex + step + sections.length) % sections.length])
+      break
+    case index.barIndex:
+      root.stepBarIndex(step)
+      break
+    case index.confirmClear:
+      root.store.setConfirmClear(!root.store.confirmClear)
+      break
+    case index.clearHistory:
+      break
     }
   }
 
   function activateSettings() {
-    if (root.settingsCursor === 6) {
+    var index = root.settingsIndex
+    if (root.settingsCursor === index.centerScreen) {
       if (!root.store || root.store.mode !== "vertical") root.setPlacement("center", "center")
       return
     }
-    if (root.settingsCursor === 7) {
+    if (root.settingsCursor === index.screens) {
       root.toggleScreenAtCursor()
       return
     }
-    if (root.settingsCursor === 22) {
+    if (root.settingsCursor === index.installEngine) {
       if (root.store) root.store.installEngine()
+      return
+    }
+    if (root.settingsCursor === index.clearHistory) {
+      root.requestClear()
       return
     }
     root.adjustSettings(1)
@@ -467,23 +838,6 @@ Panel {
     Qt.callLater(function() { root.focusActiveContent() })
   }
 
-  function handleClearShortcut() {
-    if (root.settingsOpen) return
-    if (!root.store || !root.store.confirmClear) {
-      root.clearArmed = false
-      root.clearAll()
-      return
-    }
-    if (root.clearArmed) {
-      root.clearArmed = false
-      clearArmTimer.stop()
-      root.clearAll()
-      return
-    }
-    root.clearArmed = true
-    clearArmTimer.restart()
-  }
-
   Timer {
     id: clearArmTimer
     interval: 3000
@@ -512,7 +866,7 @@ Panel {
   function handleActivate() {
     if (root.helpOpen) return
     if (root.settingsOpen) { root.activateSettings(); return }
-    if (root.selectedEntry !== null) { root.selectedEntry = null; return }
+    if (root.selectedEntry !== null) { root.backToList(); return }
     if (root.store && root.store.enterOpens === "detail") root.openDetailAtCursor()
     else {
       if (root.cursorIndex < 0 && root.matchedEntries.length > 0) root.cursorIndex = 0
@@ -521,27 +875,47 @@ Panel {
   }
 
   function handleDelete(shift) {
-    if (root.settingsOpen) return
-    if (shift) { root.handleClearShortcut(); return }
+    if (root.settingsOpen || root.helpOpen || root.searchOpen) return
+    if (shift) { root.requestClear(); return }
     if (root.selectedEntry !== null) root.deleteEntry(root.selectedEntry)
     else root.deleteCursorEntry()
   }
 
-  onSettingsOpenChanged: { var v = root.activeScrollView(); if (v) v.contentY = 0 }
-  onSelectedEntryChanged: { var v = root.activeScrollView(); if (v) v.contentY = 0 }
+  onSettingsOpenChanged: {
+    var view = root.activeScrollView()
+    if (view) view.contentY = 0
+  }
+  onSettingsCategoryChanged: {
+    Qt.callLater(function() {
+      root.scrollSettingsCursorIntoView()
+      var view = root.activeScrollView()
+      if (view) view.contentY = 0
+    })
+  }
+  onSelectedEntryChanged: {
+    var view = root.activeScrollView()
+    if (view) view.contentY = 0
+  }
   onQueryChanged: {
     root.cursorIndex = -1
-    var v = root.activeScrollView()
-    if (v) v.contentY = 0
-    // A new search starts at the top of its own results, not at the previous
-    // scroll offset.
+    var view = root.activeScrollView()
+    if (view) view.contentY = 0
     if (root.activeContent && root.activeContent.resetListScroll)
       root.activeContent.resetListScroll()
   }
 
   // ---- navigation / presentation ----
 
-  function openDetail(entry) { root.selectedEntry = entry }
+  function openDetail(entry) {
+    if (root.searchOpen) {
+      root.searchOpen = false
+      root.query = ""
+      var field = root.activeSearchField()
+      if (field) field.text = ""
+      Qt.callLater(function() { root.focusActiveContent() })
+    }
+    root.selectedEntry = entry
+  }
   function backToList() { root.selectedEntry = null }
 
   // ---- keyboard cursor ----
@@ -565,7 +939,9 @@ Panel {
 
   function activateCursor() {
     if (root.cursorIndex < 0 || root.cursorIndex >= root.matchedEntries.length) return
-    root.openDetail(root.matchedEntries[root.cursorIndex])
+    var entry = root.matchedEntries[root.cursorIndex]
+    if (root.store && root.store.enterOpens === "detail") root.openDetail(entry)
+    else root.activateEntry(entry)
   }
 
   function deleteCursorEntry() {
@@ -573,1756 +949,9 @@ Panel {
     root.deleteEntry(root.matchedEntries[root.cursorIndex])
   }
 
-  function iconSource(icon) {
-    var value = String(icon || "")
-    if (value.length === 0) return ""
-    if (value.indexOf("file://") === 0 || value.indexOf("image://") === 0) return value
-    if (value.charAt(0) === "/") return Util.fileUrl(value)
-    if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(value)) return ""
-    return Quickshell.iconPath(value, true)
-  }
-
-  function bodyText(entry) {
-    return Model.styledBody(entry.body, entry.app, entry.appIcon)
-  }
-
   // ======================================================================
   // UI
   // ======================================================================
-
-  // One notification row in the list. The Repeater delegate block below
-  // passes its model data in through `entry` (required properties are not
-  // injectable into inline components).
- component NotificationRow: BorderSurface {
-    id: rowRoot
-    property var entry: null
-    property int rowIndex: -1
-    property bool cursorActive: false
-
-    width: parent ? parent.width : 0
-    radius: root.cornerRadius
-    // Active card (keyboard cursor) carries the theme's colored notification
-    // border; inactive cards get the theme's normal control border. Both are
-    // theme tokens — no hardcoded colors.
-    color: Commons.Color.notifications.background
-    borderSpec: rowRoot.cursorActive
-      ? Border.surfaceSpec("notifications", "border", Commons.Color.notifications.border, Math.max(1, Style.space(2)))
-      : Border.controlSpec("normal", Commons.Color.notifications.text, Commons.Color.accent)
-    clip: true
-
-    readonly property color cardText: Commons.Color.notifications.text
-    readonly property color dimColor: Qt.darker(cardText, 1.5)
-    readonly property color bodyColor: Qt.darker(cardText, 1.15)
-
-    implicitHeight: rowLayout.implicitHeight + borderTop + borderBottom
-
-    HoverHandler {
-      id: rowHover
-      // Mouse and keyboard share one selection: hovering a row moves the
-      // cursor onto it, so a later Del/Enter acts on what's under the mouse.
-      onHoveredChanged: if (rowHover.hovered) root.cursorIndex = rowRoot.rowIndex
-    }
-
-    MouseArea {
-      anchors.fill: parent
-      acceptedButtons: Qt.LeftButton | Qt.RightButton
-      cursorShape: Qt.PointingHandCursor
-      onClicked: function(mouse) {
-        if (mouse.button === Qt.RightButton) root.deleteEntry(rowRoot.entry)
-        else root.activateEntry(rowRoot.entry)
-      }
-    }
-
-    RowLayout {
-      id: rowLayout
-      anchors.top: parent.top
-      anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.topMargin: rowRoot.borderTop
-      anchors.leftMargin: rowRoot.borderLeft
-      // Reserve the dismiss button's corner so the relative time never
-      // renders underneath it.
-      anchors.rightMargin: rowRoot.borderRight + Style.space(52)
-      anchors.bottomMargin: rowRoot.borderBottom
-      spacing: Style.space(10)
-
-      // App icon, with the glyph fallback the toasts use when there is no
-      // resolvable icon.
-      Item {
-        id: iconSlot
-        Layout.preferredWidth: Style.space(36)
-        Layout.preferredHeight: Style.space(36)
-        Layout.leftMargin: Style.space(10)
-        Layout.topMargin: Style.space(10)
-        Layout.alignment: Qt.AlignTop
-
-        property bool imageFailed: false
-        readonly property string source: root.iconSource(root.previewSource(rowRoot.entry))
-        readonly property bool showGlyph: (source === "" || imageFailed) && rowRoot.entry.glyph.length > 0
-
-        Image {
-          anchors.fill: parent
-          visible: !iconSlot.showGlyph
-          source: iconSlot.source
-          sourceSize.width: iconSlot.width * Screen.devicePixelRatio
-          sourceSize.height: iconSlot.height * Screen.devicePixelRatio
-          fillMode: Image.PreserveAspectFit
-          asynchronous: true
-          smooth: true
-          onStatusChanged: iconSlot.imageFailed = (status === Image.Error)
-        }
-
-        Text {
-          anchors.centerIn: parent
-          textFormat: Text.PlainText
-          visible: iconSlot.showGlyph
-          text: rowRoot.entry.glyph
-          color: rowRoot.cardText
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.icon
-        }
-      }
-
-      ColumnLayout {
-        Layout.fillWidth: true
-        Layout.topMargin: Style.space(9)
-        Layout.bottomMargin: Style.space(9)
-        Layout.rightMargin: Style.space(10)
-        spacing: Style.space(2)
-
-        RowLayout {
-          Layout.fillWidth: true
-          spacing: Style.space(6)
-
-          Text {
-            Layout.fillWidth: true
-            textFormat: Text.PlainText
-            text: rowRoot.entry.app.length > 0 ? rowRoot.entry.app : "Notification"
-            color: rowRoot.dimColor
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-            elide: Text.ElideRight
-          }
-
-          Text {
-            textFormat: Text.PlainText
-            text: Model.timeAgo(rowRoot.entry.timestamp, Date.now())
-            color: rowRoot.dimColor
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-          }
-        }
-
-        Text {
-          Layout.fillWidth: true
-          textFormat: Text.PlainText
-          visible: rowRoot.entry.summary.length > 0
-          text: rowRoot.entry.summary
-          color: rowRoot.cardText
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.title
-          font.bold: true
-          wrapMode: Text.WordWrap
-          elide: Text.ElideRight
-          maximumLineCount: 2
-        }
-
-        Text {
-          Layout.fillWidth: true
-          visible: rowRoot.entry.body.length > 0 && (!root.store || !root.store.hideBodies)
-          text: root.bodyText(rowRoot.entry)
-          textFormat: Text.StyledText
-          color: rowRoot.bodyColor
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
-          wrapMode: Text.WordWrap
-          elide: Text.ElideRight
-          maximumLineCount: 3
-        }
-      }
-    }
-
-    // Hover actions: open the detail card, or dismiss the notification.
-    PanelActionButton {
-      anchors.top: parent.top
-      anchors.right: parent.right
-      anchors.topMargin: Style.space(5)
-      anchors.rightMargin: Style.space(31)
-      visible: rowHover.hovered
-      iconText: "󰋼"
-      tooltipText: "Details"
-      foreground: rowRoot.cardText
-      hoverColor: Commons.Color.accent
-      fontFamily: root.fontFamily
-      onClicked: root.openDetail(rowRoot.entry)
-    }
-
-    PanelActionButton {
-      anchors.top: parent.top
-      anchors.right: parent.right
-      anchors.topMargin: Style.space(5)
-      anchors.rightMargin: Style.space(5)
-      visible: rowHover.hovered
-      iconText: "󰆴"
-      tooltipText: "Remove"
-      foreground: rowRoot.cardText
-      hoverColor: Commons.Color.urgent
-      fontFamily: root.fontFamily
-      onClicked: root.deleteEntry(rowRoot.entry)
-    }
-  }
-
-  // Side-by-side card for the horizontal band. Fixed width keeps the strip
-  // tidy; the body is clamped to two lines.
-  component CompactCard: BorderSurface {
-    id: compactRoot
-    property var entry: null
-    property int rowIndex: -1
-    property bool cursorActive: false
-
-    width: Style.space(280)
-    height: Style.space(88)
-    radius: root.cornerRadius
-    color: Commons.Color.notifications.background
-    borderSpec: compactRoot.cursorActive
-      ? Border.surfaceSpec("notifications", "border", Commons.Color.notifications.border, Math.max(1, Style.space(2)))
-      : Border.controlSpec("normal", Commons.Color.notifications.text, Commons.Color.accent)
-    clip: true
-
-    readonly property color cardText: Commons.Color.notifications.text
-    readonly property color dimColor: Qt.darker(cardText, 1.5)
-    readonly property color bodyColor: Qt.darker(cardText, 1.15)
-
-    HoverHandler {
-      id: compactHover
-      onHoveredChanged: if (compactHover.hovered) root.cursorIndex = compactRoot.rowIndex
-    }
-
-    MouseArea {
-      anchors.fill: parent
-      acceptedButtons: Qt.LeftButton | Qt.RightButton
-      cursorShape: Qt.PointingHandCursor
-      onClicked: function(mouse) {
-        if (mouse.button === Qt.RightButton) root.deleteEntry(compactRoot.entry)
-        else root.activateEntry(compactRoot.entry)
-      }
-    }
-
-    RowLayout {
-      anchors.fill: parent
-      anchors.margins: Style.space(8)
-      anchors.rightMargin: Style.space(50)
-      spacing: Style.space(8)
-
-      Item {
-        Layout.preferredWidth: Style.space(26)
-        Layout.preferredHeight: Style.space(26)
-        Layout.alignment: Qt.AlignTop
-
-        property bool imageFailed: false
-        readonly property string source: root.iconSource(root.previewSource(compactRoot.entry))
-        readonly property bool showGlyph: (source === "" || imageFailed) && compactRoot.entry.glyph.length > 0
-
-        Image {
-          anchors.fill: parent
-          visible: !parent.showGlyph
-          source: parent.source
-          sourceSize.width: parent.width * Screen.devicePixelRatio
-          sourceSize.height: parent.height * Screen.devicePixelRatio
-          fillMode: Image.PreserveAspectFit
-          asynchronous: true
-          smooth: true
-          onStatusChanged: parent.imageFailed = (status === Image.Error)
-        }
-
-        Text {
-          anchors.centerIn: parent
-          textFormat: Text.PlainText
-          visible: parent.showGlyph
-          text: compactRoot.entry.glyph
-          color: compactRoot.cardText
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.icon
-        }
-      }
-
-      ColumnLayout {
-        Layout.fillWidth: true
-        spacing: Style.space(2)
-
-        RowLayout {
-          Layout.fillWidth: true
-          spacing: Style.space(6)
-
-          Text {
-            Layout.fillWidth: true
-            textFormat: Text.PlainText
-            text: compactRoot.entry.app.length > 0 ? compactRoot.entry.app : "Notification"
-            color: compactRoot.dimColor
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-            elide: Text.ElideRight
-          }
-
-          Text {
-            textFormat: Text.PlainText
-            text: Model.timeAgo(compactRoot.entry.timestamp, Date.now())
-            color: compactRoot.dimColor
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-          }
-        }
-
-        Text {
-          Layout.fillWidth: true
-          textFormat: Text.PlainText
-          visible: compactRoot.entry.summary.length > 0
-          text: compactRoot.entry.summary
-          color: compactRoot.cardText
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
-          font.bold: true
-          elide: Text.ElideRight
-          maximumLineCount: 1
-        }
-
-        Text {
-          Layout.fillWidth: true
-          visible: compactRoot.entry.body.length > 0 && (!root.store || !root.store.hideBodies)
-          text: root.bodyText(compactRoot.entry)
-          textFormat: Text.StyledText
-          color: compactRoot.bodyColor
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          wrapMode: Text.WordWrap
-          elide: Text.ElideRight
-          maximumLineCount: 2
-        }
-      }
-    }
-
-    PanelActionButton {
-      anchors.top: parent.top
-      anchors.right: parent.right
-      anchors.topMargin: Style.space(4)
-      anchors.rightMargin: Style.space(29)
-      visible: compactHover.hovered
-      iconText: "󰋼"
-      tooltipText: "Details"
-      foreground: compactRoot.cardText
-      hoverColor: Commons.Color.accent
-      fontFamily: root.fontFamily
-      onClicked: root.openDetail(compactRoot.entry)
-    }
-
-    PanelActionButton {
-      anchors.top: parent.top
-      anchors.right: parent.right
-      anchors.topMargin: Style.space(4)
-      anchors.rightMargin: Style.space(5)
-      visible: compactHover.hovered
-      iconText: "󰆴"
-      tooltipText: "Remove"
-      foreground: compactRoot.cardText
-      hoverColor: Commons.Color.urgent
-      fontFamily: root.fontFamily
-      onClicked: root.deleteEntry(compactRoot.entry)
-    }
-  }
-
-  component StepperRow: RowLayout {
-    id: stepper
-    property string label: ""
-    property int value: 0
-    property int minimum: 0
-    property int maximum: 64
-    property int stepSize: 4
-    signal step(int delta)
-
-    width: parent ? parent.width : 0
-    spacing: Style.space(6)
-
-    Item { Layout.fillWidth: true; implicitHeight: 1 }
-
-    Text {
-      textFormat: Text.PlainText
-      text: stepper.label
-      color: root.fg
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.bodySmall
-      Layout.preferredWidth: Style.space(108)
-      elide: Text.ElideRight
-    }
-
-    PanelActionButton {
-      iconText: "−"
-      tooltipText: "Decrease"
-      focusable: true
-      foreground: root.fg
-      hoverColor: Commons.Color.accent
-      fontFamily: root.fontFamily
-      enabled: stepper.value > stepper.minimum
-      onClicked: stepper.step(-stepper.stepSize)
-    }
-
-    Text {
-      textFormat: Text.PlainText
-      text: stepper.value + " px"
-      color: root.fg
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.bodySmall
-      horizontalAlignment: Text.AlignHCenter
-      Layout.preferredWidth: Style.space(46)
-    }
-
-    PanelActionButton {
-      iconText: "+"
-      tooltipText: "Increase"
-      focusable: true
-      foreground: root.fg
-      hoverColor: Commons.Color.accent
-      fontFamily: root.fontFamily
-      enabled: stepper.value < stepper.maximum
-      onClicked: stepper.step(stepper.stepSize)
-    }
-
-    Item { Layout.fillWidth: true; implicitHeight: 1 }
-  }
-
-
-
-  component CursorRow: Item {
-    id: cursorRow
-    property bool active: false
-    default property alias content: inner.children
-
-    width: parent ? parent.width : 0
-    // Measure the tallest child directly. childrenRect would loop here
-    // because the usual child is centered in a container that fills the row.
-    height: {
-      var h = 0
-      for (var i = 0; i < inner.children.length; i++) {
-        var child = inner.children[i]
-        if (child && child.visible) h = Math.max(h, child.implicitHeight)
-      }
-      return h + Style.space(8)
-    }
-
-    Rectangle {
-      anchors.fill: parent
-      radius: Style.cornerRadius
-      color: cursorRow.active ? Style.hoverFillFor(root.fg, Commons.Color.accent) : "transparent"
-      Behavior on color { ColorAnimation { duration: 100 } }
-    }
-
-    Item {
-      id: inner
-      anchors.fill: parent
-      anchors.margins: Style.space(4)
-    }
-  }
-
-  component SettingsDivider: Item {
-    width: parent ? parent.width : 0
-    height: Style.space(23)
-
-    Rectangle {
-      anchors.centerIn: parent
-      width: Math.min(parent.width, Style.space(380))
-      height: 1
-      color: Qt.darker(root.fg, 2.6)
-      opacity: 0.8
-    }
-  }
-
-  component LayoutSettings: Column {
-    spacing: Style.space(8)
-
-    Item {
-      width: parent.width
-      height: sectionTitle.implicitHeight
-
-      PanelSectionHeader {
-        id: sectionTitle
-        anchors.horizontalCenter: parent.horizontalCenter
-        text: "LAYOUT"
-        foreground: root.fg
-        fontFamily: root.fontFamily
-      }
-    }
-
-    Column {
-      width: parent.width
-      spacing: Style.space(7)
-
-
-                Item {
-                  width: parent.width
-                  height: layoutRow.implicitHeight
-
-                  Rectangle {
-                    anchors.fill: parent
-                    radius: Style.cornerRadius
-                    color: root.settingsCursor === 0 ? Style.hoverFillFor(root.fg, Commons.Color.accent) : "transparent"
-                    Behavior on color { ColorAnimation { duration: 100 } }
-                  }
-
-
-                  Row {
-                    id: layoutRow
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    spacing: Style.space(6)
-
-                    Button {
-                      id: settingsFirstControl
-                      text: "Window"
-                      Layout.preferredWidth: Style.space(80)
-                      focusable: true
-                      selected: root.store !== null && root.store.mode === "window"
-                      bordered: true
-                      fontSize: Style.font.bodySmall
-                      fontFamily: root.fontFamily
-                      foreground: root.fg
-                      onClicked: if (root.store) root.store.setMode("window")
-                    }
-
-                    Button {
-                      text: "Horizontal"
-                      Layout.preferredWidth: Style.space(80)
-                      focusable: true
-                      selected: root.store !== null && root.store.mode === "horizontal"
-                      bordered: true
-                      fontSize: Style.font.bodySmall
-                      fontFamily: root.fontFamily
-                      foreground: root.fg
-                      onClicked: if (root.store) root.store.setMode("horizontal")
-                    }
-
-                    Button {
-                      text: "Vertical"
-                      Layout.preferredWidth: Style.space(80)
-                      focusable: true
-                      selected: root.store !== null && root.store.mode === "vertical"
-                      bordered: true
-                      fontSize: Style.font.bodySmall
-                      fontFamily: root.fontFamily
-                      foreground: root.fg
-                      onClicked: if (root.store) root.store.setMode("vertical")
-                    }
-                  }
-                }
-    }
-  }
-
-  component SpacingSettings: Column {
-    spacing: Style.space(8)
-
-    Item {
-      width: parent.width
-      height: sectionTitle.implicitHeight
-
-      PanelSectionHeader {
-        id: sectionTitle
-        anchors.horizontalCenter: parent.horizontalCenter
-        text: "SPACING"
-        foreground: root.fg
-        fontFamily: root.fontFamily
-      }
-    }
-
-    Column {
-      width: parent.width
-      spacing: Style.space(7)
-
-
-                CursorRow {
-                  active: root.settingsCursor === 1
-
-                  StepperRow {
-                  label: "Horizontal"
-                  value: root.store ? root.store.marginX : 12
-                  onStep: function(delta) { if (root.store) root.store.setMargin("x", value + delta) }
-                }
-                }
-
-                CursorRow {
-                  active: root.settingsCursor === 2
-
-                  StepperRow {
-                  label: "Vertical"
-                  value: root.store ? root.store.marginY : 12
-                  onStep: function(delta) { if (root.store) root.store.setMargin("y", value + delta) }
-                }
-                }
-
-                CursorRow {
-                  active: root.settingsCursor === 3
-
-                  StepperRow {
-                  label: "Padding"
-                  value: root.store ? root.store.padding : 12
-                  minimum: 4
-                  maximum: 32
-                  stepSize: 2
-                  onStep: function(delta) { if (root.store) root.store.setPadding(value + delta) }
-                }
-                }
-
-                CursorRow {
-                  active: root.settingsCursor === 4
-
-                  StepperRow {
-                  label: "Card spacing"
-                  value: root.store ? root.store.cardSpacing : 10
-                  minimum: 2
-                  maximum: 24
-                  stepSize: 2
-                  onStep: function(delta) { if (root.store) root.store.setCardSpacing(value + delta) }
-                }
-                }
-    }
-  }
-
-  component PositionSettings: Column {
-    id: positionSection
-    readonly property bool verticalMode: root.store !== null && root.store.mode === "vertical"
-
-    spacing: Style.space(8)
-
-    Item {
-      width: parent.width
-      height: sectionTitle.implicitHeight
-
-      PanelSectionHeader {
-        id: sectionTitle
-        anchors.horizontalCenter: parent.horizontalCenter
-        text: "POSITION"
-        foreground: root.fg
-        fontFamily: root.fontFamily
-      }
-    }
-
-    Column {
-      width: parent.width
-      spacing: Style.space(7)
-
-
-                Item {
-                  width: parent.width
-                  height: positionGrid.implicitHeight
-
-                  Rectangle {
-                    anchors.fill: parent
-                    radius: Style.cornerRadius
-                    color: root.settingsCursor === 5 ? Style.hoverFillFor(root.fg, Commons.Color.accent) : "transparent"
-                    Behavior on color { ColorAnimation { duration: 100 } }
-                  }
-
-
-                  GridLayout {
-                    id: positionGrid
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    columns: 4
-                    columnSpacing: Style.space(6)
-                    rowSpacing: Style.space(6)
-
-                    Text {
-                      textFormat: Text.PlainText
-                      text: "Top"
-                      color: root.fg
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.bodySmall
-                      Layout.preferredWidth: Style.space(36)
-                    }
-
-                    Button {
-                      text: "Left"
-                      Layout.preferredWidth: Style.space(86)
-                      focusable: true
-                      selected: root.placementVertical === "top" && root.placementHorizontal === "left"
-                      bordered: true
-                      fontSize: Style.font.bodySmall
-                      fontFamily: root.fontFamily
-                      foreground: root.fg
-                      onClicked: root.setPlacement("top", "left")
-                    }
-
-                    Button {
-                      text: "Center"
-                      Layout.preferredWidth: Style.space(86)
-                      focusable: true
-                      selected: root.placementVertical === "top" && root.placementHorizontal === "center"
-                      bordered: true
-                      fontSize: Style.font.bodySmall
-                      fontFamily: root.fontFamily
-                      foreground: root.fg
-                      onClicked: root.setPlacement("top", "center")
-                    }
-
-                    Button {
-                      text: "Right"
-                      Layout.preferredWidth: Style.space(86)
-                      focusable: true
-                      selected: root.placementVertical === "top" && root.placementHorizontal === "right"
-                      bordered: true
-                      fontSize: Style.font.bodySmall
-                      fontFamily: root.fontFamily
-                      foreground: root.fg
-                      onClicked: root.setPlacement("top", "right")
-                    }
-
-                    Text {
-                      textFormat: Text.PlainText
-                      text: "Bottom"
-                      color: root.fg
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.bodySmall
-                      Layout.preferredWidth: Style.space(36)
-                      opacity: positionSection.verticalMode ? 0.4 : 1
-                    }
-
-                    Button {
-                      text: "Left"
-                      Layout.preferredWidth: Style.space(86)
-                      focusable: true
-                      enabled: !positionSection.verticalMode
-                      opacity: positionSection.verticalMode ? 0.4 : 1
-                      selected: root.placementVertical === "bottom" && root.placementHorizontal === "left"
-                      bordered: true
-                      fontSize: Style.font.bodySmall
-                      fontFamily: root.fontFamily
-                      foreground: root.fg
-                      onClicked: root.setPlacement("bottom", "left")
-                    }
-
-                    Button {
-                      text: "Center"
-                      Layout.preferredWidth: Style.space(86)
-                      focusable: true
-                      enabled: !positionSection.verticalMode
-                      opacity: positionSection.verticalMode ? 0.4 : 1
-                      selected: root.placementVertical === "bottom" && root.placementHorizontal === "center"
-                      bordered: true
-                      fontSize: Style.font.bodySmall
-                      fontFamily: root.fontFamily
-                      foreground: root.fg
-                      onClicked: root.setPlacement("bottom", "center")
-                    }
-
-                    Button {
-                      text: "Right"
-                      Layout.preferredWidth: Style.space(86)
-                      focusable: true
-                      enabled: !positionSection.verticalMode
-                      opacity: positionSection.verticalMode ? 0.4 : 1
-                      selected: root.placementVertical === "bottom" && root.placementHorizontal === "right"
-                      bordered: true
-                      fontSize: Style.font.bodySmall
-                      fontFamily: root.fontFamily
-                      foreground: root.fg
-                      onClicked: root.setPlacement("bottom", "right")
-                    }
-                  }
-                }
-
-                Item {
-                  width: parent.width
-                  height: centerScreenButton.implicitHeight
-
-                  Rectangle {
-                    anchors.fill: parent
-                    radius: Style.cornerRadius
-                    color: root.settingsCursor === 6 ? Style.hoverFillFor(root.fg, Commons.Color.accent) : "transparent"
-                    Behavior on color { ColorAnimation { duration: 100 } }
-                  }
-
-
-                  Button {
-                    id: centerScreenButton
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    text: "Center Screen"
-                    enabled: !positionSection.verticalMode
-                    opacity: positionSection.verticalMode ? 0.4 : 1
-                    Layout.preferredWidth: Style.space(140)
-                    focusable: true
-                    selected: root.store !== null && root.store.placement === "center-center"
-                    bordered: true
-                    fontSize: Style.font.bodySmall
-                    fontFamily: root.fontFamily
-                    foreground: root.fg
-                    onClicked: root.setPlacement("center", "center")
-                  }
-                }
-
-                Item {
-                  width: parent.width
-                  height: screenFlow.implicitHeight
-
-                  Rectangle {
-                    anchors.fill: parent
-                    radius: Style.cornerRadius
-                    color: root.settingsCursor === 7 ? Style.hoverFillFor(root.fg, Commons.Color.accent) : "transparent"
-                    Behavior on color { ColorAnimation { duration: 100 } }
-                  }
-
-                  Flow {
-                    id: screenFlow
-                    width: parent.width
-                    spacing: Style.space(6)
-
-                    Text {
-                      textFormat: Text.PlainText
-                      text: "Screen"
-                      width: Style.space(52)
-                      height: Style.space(28)
-                      verticalAlignment: Text.AlignVCenter
-                      color: root.fg
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.bodySmall
-                    }
-
-                    Repeater {
-                      model: root.screenList
-
-                      delegate: Button {
-                        readonly property bool selectedScreen: root.store !== null
-                          && root.store.screenNames.indexOf(String(modelData.name || "")) !== -1
-                        text: (root.settingsCursor === 7 && root.screenCursor === index ? "› " : "")
-                          + (selectedScreen ? "✓ " : "")
-                          + String(modelData.name || "")
-                        focusable: true
-                        selected: selectedScreen
-                        bordered: true
-                        fontSize: Style.font.bodySmall
-                        fontFamily: root.fontFamily
-                        foreground: root.fg
-                        onClicked: {
-                          if (!root.store) return
-                          root.screenCursor = index
-                          root.store.toggleScreen(String(modelData.name || ""))
-                        }
-                      }
-                    }
-                  }
-                }
-    }
-  }
-
-  component BarIconSettings: Column {
-    spacing: Style.space(8)
-
-    Item {
-      width: parent.width
-      height: sectionTitle.implicitHeight
-
-      PanelSectionHeader {
-        id: sectionTitle
-        anchors.horizontalCenter: parent.horizontalCenter
-        text: "BAR ICONS"
-        foreground: root.fg
-        fontFamily: root.fontFamily
-      }
-    }
-
-    Column {
-      width: parent.width
-      spacing: Style.space(7)
-
-
-                Item {
-                  width: parent.width
-                  height: barSectionRow.implicitHeight
-
-                  Rectangle {
-                    anchors.fill: parent
-                    radius: Style.cornerRadius
-                    color: root.settingsCursor === 8 ? Style.hoverFillFor(root.fg, Commons.Color.accent) : "transparent"
-                    Behavior on color { ColorAnimation { duration: 100 } }
-                  }
-
-
-                  Row {
-                    id: barSectionRow
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    spacing: Style.space(6)
-
-                    Button {
-                      text: "Left"
-                      Layout.preferredWidth: Style.space(86)
-                      focusable: true
-                      selected: root.store !== null && root.store.barSection === "left"
-                      bordered: true
-                      fontSize: Style.font.bodySmall
-                      fontFamily: root.fontFamily
-                      foreground: root.fg
-                      onClicked: root.moveBarSection("left")
-                    }
-
-                    Button {
-                      text: "Center"
-                      Layout.preferredWidth: Style.space(86)
-                      focusable: true
-                      selected: root.store !== null && root.store.barSection === "center"
-                      bordered: true
-                      fontSize: Style.font.bodySmall
-                      fontFamily: root.fontFamily
-                      foreground: root.fg
-                      onClicked: root.moveBarSection("center")
-                    }
-
-                    Button {
-                      text: "Right"
-                      Layout.preferredWidth: Style.space(86)
-                      focusable: true
-                      selected: root.store !== null && root.store.barSection === "right"
-                      bordered: true
-                      fontSize: Style.font.bodySmall
-                      fontFamily: root.fontFamily
-                      foreground: root.fg
-                      onClicked: root.moveBarSection("right")
-                    }
-                  }
-                }
-
-                Item {
-                  width: parent.width
-                  height: barIndexRow.implicitHeight
-
-                  Rectangle {
-                    anchors.fill: parent
-                    radius: Style.cornerRadius
-                    color: root.settingsCursor === 9 ? Style.hoverFillFor(root.fg, Commons.Color.accent) : "transparent"
-                    Behavior on color { ColorAnimation { duration: 100 } }
-                  }
-
-
-                  Row {
-                    id: barIndexRow
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    spacing: Style.space(6)
-
-                    Text {
-                      textFormat: Text.PlainText
-                      text: "Position"
-                      color: root.fg
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.bodySmall
-                    }
-
-                    PanelActionButton {
-                      iconText: "‹"
-                      tooltipText: "Move earlier"
-                      focusable: true
-                      foreground: root.fg
-                      hoverColor: Commons.Color.accent
-                      fontFamily: root.fontFamily
-                      enabled: root.store !== null && root.store.barSection !== "" && root.store.barIndex > 0
-                      onClicked: root.stepBarIndex(-1)
-                    }
-
-                    Text {
-                      textFormat: Text.PlainText
-                      text: !root.store || root.store.barSection === ""
-                        ? "—"
-                        : (root.store.barIndex + 1) + " / " + (root.store.barSizes[root.store.barSection] || 0)
-                      color: root.fg
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.bodySmall
-                      horizontalAlignment: Text.AlignHCenter
-                      Layout.preferredWidth: Style.space(52)
-                    }
-
-                    PanelActionButton {
-                      iconText: "›"
-                      tooltipText: "Move later"
-                      focusable: true
-                      foreground: root.fg
-                      hoverColor: Commons.Color.accent
-                      fontFamily: root.fontFamily
-                      enabled: root.store !== null && root.store.barSection !== ""
-                        && root.store.barIndex < (root.store.barSizes[root.store.barSection] || 0) - 1
-                      onClicked: root.stepBarIndex(1)
-                    }
-                  }
-                }
-    }
-  }
-
-  component ClearSettings: Column {
-    spacing: Style.space(8)
-
-    Item {
-      width: parent.width
-      height: sectionTitle.implicitHeight
-
-      PanelSectionHeader {
-        id: sectionTitle
-        anchors.horizontalCenter: parent.horizontalCenter
-        text: "CLEAR"
-        foreground: root.fg
-        fontFamily: root.fontFamily
-      }
-    }
-
-    Column {
-      width: parent.width
-      spacing: Style.space(7)
-
-
-                Item {
-                  width: parent.width
-                  height: confirmRow.implicitHeight
-
-                  Rectangle {
-                    anchors.fill: parent
-                    radius: Style.cornerRadius
-                    color: root.settingsCursor === 10 ? Style.hoverFillFor(root.fg, Commons.Color.accent) : "transparent"
-                    Behavior on color { ColorAnimation { duration: 100 } }
-                  }
-
-
-                  Row {
-                    id: confirmRow
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    spacing: Style.space(6)
-
-                    Text {
-                      textFormat: Text.PlainText
-                      text: "Confirmation"
-                      color: root.fg
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.bodySmall
-                      width: Style.space(110)
-                      elide: Text.ElideRight
-                    }
-
-                    Button {
-                      text: "Off"
-                      Layout.preferredWidth: Style.space(64)
-                      focusable: true
-                      selected: root.store !== null && !root.store.confirmClear
-                      bordered: true
-                      fontSize: Style.font.bodySmall
-                      fontFamily: root.fontFamily
-                      foreground: root.fg
-                      onClicked: if (root.store) root.store.setConfirmClear(false)
-                    }
-
-                    Button {
-                      text: "On"
-                      Layout.preferredWidth: Style.space(64)
-                      focusable: true
-                      selected: root.store !== null && root.store.confirmClear
-                      bordered: true
-                      fontSize: Style.font.bodySmall
-                      fontFamily: root.fontFamily
-                      foreground: root.fg
-                      onClicked: if (root.store) root.store.setConfirmClear(true)
-                    }
-                  }
-                }
-
-                Text {
-                  width: parent.width
-                  horizontalAlignment: Text.AlignHCenter
-                  textFormat: Text.PlainText
-                  text: "30 days of history · / search · d Do Not Disturb · Shift+C clear"
-                  color: Qt.darker(root.fg, 1.6)
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  wrapMode: Text.WordWrap
-                }
-
-                Text {
-                  width: parent.width
-                  horizontalAlignment: Text.AlignHCenter
-                  textFormat: Text.PlainText
-                  text: "Placement applies to this screen. Bar moves take effect immediately."
-                  color: Qt.darker(root.fg, 1.6)
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  wrapMode: Text.WordWrap
-                }
-    }
-  }
-
-
-  component PrivacySettings: Column {
-    spacing: Style.space(8)
-
-    Item {
-      width: parent.width
-      height: sectionTitle.implicitHeight
-
-      PanelSectionHeader {
-        id: sectionTitle
-        anchors.horizontalCenter: parent.horizontalCenter
-        text: "PRIVACY"
-        foreground: root.fg
-        fontFamily: root.fontFamily
-      }
-    }
-
-    Column {
-      width: parent.width
-      spacing: Style.space(7)
-
-      CursorRow {
-        active: root.settingsCursor === 11
-
-        Row {
-          anchors.centerIn: parent
-          spacing: Style.space(6)
-
-          Text {
-            textFormat: Text.PlainText
-            text: "Bodies"
-            width: Style.space(100)
-            color: root.fg
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
-          }
-
-          Button {
-            text: "Show"
-            Layout.preferredWidth: Style.space(64)
-            focusable: true
-            selected: root.store !== null && !root.store.hideBodies
-            bordered: true
-            fontSize: Style.font.bodySmall
-            fontFamily: root.fontFamily
-            foreground: root.fg
-            onClicked: if (root.store) root.store.setHideBodies(false)
-          }
-
-          Button {
-            text: "Hide"
-            Layout.preferredWidth: Style.space(64)
-            focusable: true
-            selected: root.store !== null && root.store.hideBodies
-            bordered: true
-            fontSize: Style.font.bodySmall
-            fontFamily: root.fontFamily
-            foreground: root.fg
-            onClicked: if (root.store) root.store.setHideBodies(true)
-          }
-        }
-      }
-
-      CursorRow {
-        active: root.settingsCursor === 12
-
-        Row {
-          anchors.centerIn: parent
-          spacing: Style.space(6)
-
-          Text {
-            textFormat: Text.PlainText
-            text: "Previews"
-            width: Style.space(100)
-            color: root.fg
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
-          }
-
-          Button {
-            text: "Show"
-            Layout.preferredWidth: Style.space(64)
-            focusable: true
-            selected: root.store !== null && root.store.showPreviews
-            bordered: true
-            fontSize: Style.font.bodySmall
-            fontFamily: root.fontFamily
-            foreground: root.fg
-            onClicked: if (root.store) root.store.setShowPreviews(true)
-          }
-
-          Button {
-            text: "Hide"
-            Layout.preferredWidth: Style.space(64)
-            focusable: true
-            selected: root.store !== null && !root.store.showPreviews
-            bordered: true
-            fontSize: Style.font.bodySmall
-            fontFamily: root.fontFamily
-            foreground: root.fg
-            onClicked: if (root.store) root.store.setShowPreviews(false)
-          }
-        }
-      }
-
-      CursorRow {
-        active: root.settingsCursor === 13
-
-        Row {
-          anchors.centerIn: parent
-          spacing: Style.space(6)
-
-          Text {
-            textFormat: Text.PlainText
-            text: "Unread badge"
-            width: Style.space(100)
-            color: root.fg
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
-          }
-
-          Button {
-            text: "On"
-            Layout.preferredWidth: Style.space(64)
-            focusable: true
-            selected: root.store !== null && root.store.showBadge
-            bordered: true
-            fontSize: Style.font.bodySmall
-            fontFamily: root.fontFamily
-            foreground: root.fg
-            onClicked: if (root.store) root.store.setShowBadge(true)
-          }
-
-          Button {
-            text: "Off"
-            Layout.preferredWidth: Style.space(64)
-            focusable: true
-            selected: root.store !== null && !root.store.showBadge
-            bordered: true
-            fontSize: Style.font.bodySmall
-            fontFamily: root.fontFamily
-            foreground: root.fg
-            onClicked: if (root.store) root.store.setShowBadge(false)
-          }
-        }
-      }
-
-      CursorRow {
-        active: root.settingsCursor === 14
-
-        Row {
-          anchors.centerIn: parent
-          spacing: Style.space(6)
-
-          Text {
-            textFormat: Text.PlainText
-            text: "Capture toasts"
-            width: Style.space(100)
-            color: root.fg
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
-          }
-
-          Button {
-            text: "On"
-            Layout.preferredWidth: Style.space(64)
-            focusable: true
-            selected: root.store !== null && root.store.captureToasts
-            bordered: true
-            fontSize: Style.font.bodySmall
-            fontFamily: root.fontFamily
-            foreground: root.fg
-            onClicked: if (root.store) root.store.setCaptureToasts(true)
-          }
-
-          Button {
-            text: "Off"
-            Layout.preferredWidth: Style.space(64)
-            focusable: true
-            selected: root.store !== null && !root.store.captureToasts
-            bordered: true
-            fontSize: Style.font.bodySmall
-            fontFamily: root.fontFamily
-            foreground: root.fg
-            onClicked: if (root.store) root.store.setCaptureToasts(false)
-          }
-        }
-      }
-
-      Text {
-        textFormat: Text.PlainText
-        width: parent.width
-        leftPadding: Style.space(8)
-        rightPadding: Style.space(8)
-        text: "Only applies with the notification engine: it controls history capture. Live toasts still appear; with omarchy.notifications this setting is ignored."
-        color: root.fg
-        opacity: 0.65
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
-        wrapMode: Text.WordWrap
-      }
-    }
-
-    Item {
-      width: parent.width
-      height: engineTitle.implicitHeight
-
-      PanelSectionHeader {
-        id: engineTitle
-        anchors.horizontalCenter: parent.horizontalCenter
-        text: "NOTIFICATION ENGINE"
-        foreground: root.fg
-        fontFamily: root.fontFamily
-      }
-    }
-
-    Column {
-      width: parent.width
-      spacing: Style.space(7)
-
-      CursorRow {
-        active: root.settingsCursor === 22
-
-        Row {
-          anchors.centerIn: parent
-          spacing: Style.space(6)
-
-          Text {
-            textFormat: Text.PlainText
-            text: "Engine"
-            width: Style.space(100)
-            color: root.fg
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
-          }
-
-          Button {
-            text: root.store && root.store.engineInstallArmed ? "Confirm" : "Install"
-            Layout.preferredWidth: Style.space(78)
-            focusable: true
-            bordered: true
-            fontSize: Style.font.bodySmall
-            fontFamily: root.fontFamily
-            foreground: root.fg
-            onClicked: if (root.store) root.store.installEngine()
-          }
-        }
-      }
-
-      CursorRow {
-        active: root.settingsCursor === 23
-
-        Row {
-          anchors.centerIn: parent
-          spacing: Style.space(6)
-
-          Text {
-            textFormat: Text.PlainText
-            text: "Actions"
-            width: Style.space(100)
-            color: root.fg
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
-          }
-
-          Button {
-            text: "Run"
-            Layout.preferredWidth: Style.space(64)
-            focusable: true
-            selected: root.store !== null && root.store.allowExecActions
-            bordered: true
-            fontSize: Style.font.bodySmall
-            fontFamily: root.fontFamily
-            foreground: root.fg
-            onClicked: if (root.store) root.store.setAllowExecActions(true)
-          }
-
-          Button {
-            text: "Block"
-            Layout.preferredWidth: Style.space(64)
-            focusable: true
-            selected: root.store !== null && !root.store.allowExecActions
-            bordered: true
-            fontSize: Style.font.bodySmall
-            fontFamily: root.fontFamily
-            foreground: root.fg
-            onClicked: if (root.store) root.store.setAllowExecActions(false)
-          }
-        }
-      }
-
-      CursorRow {
-        active: root.settingsCursor === 24
-
-        Row {
-          anchors.centerIn: parent
-          spacing: Style.space(6)
-
-          Text {
-            textFormat: Text.PlainText
-            text: "DND bypass"
-            width: Style.space(100)
-            color: root.fg
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
-          }
-
-          Button {
-            text: "Allow"
-            Layout.preferredWidth: Style.space(64)
-            focusable: true
-            selected: root.store !== null && root.store.dndBypass
-            bordered: true
-            fontSize: Style.font.bodySmall
-            fontFamily: root.fontFamily
-            foreground: root.fg
-            onClicked: if (root.store) root.store.setDndBypass(true)
-          }
-
-          Button {
-            text: "Block"
-            Layout.preferredWidth: Style.space(64)
-            focusable: true
-            selected: root.store !== null && !root.store.dndBypass
-            bordered: true
-            fontSize: Style.font.bodySmall
-            fontFamily: root.fontFamily
-            foreground: root.fg
-            onClicked: if (root.store) root.store.setDndBypass(false)
-          }
-        }
-      }
-
-      Text {
-        textFormat: Text.PlainText
-        width: parent.width
-        leftPadding: Style.space(8)
-        rightPadding: Style.space(8)
-        text: "The center works without an engine and reads omarchy.notifications history. Installing the engine replaces omarchy.notifications and disables it; the center stays installed."
-        color: root.fg
-        opacity: 0.7
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
-        wrapMode: Text.WordWrap
-      }
-
-      Text {
-        textFormat: Text.PlainText
-        width: parent.width
-        leftPadding: Style.space(8)
-        rightPadding: Style.space(8)
-        text: "Actions run only after a click, as an argv vector rather than a shell string. DND bypass covers Omarchy confirmation toasts. App names are chosen by senders, so a local app can impersonate them: block either to refuse all such requests."
-        color: root.fg
-        opacity: 0.65
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
-        wrapMode: Text.WordWrap
-      }
-    }
-  }
-
-  component ShortcutSettings: Column {
-    spacing: Style.space(8)
-
-    Item {
-      width: parent.width
-      height: sectionTitle.implicitHeight
-
-      PanelSectionHeader {
-        id: sectionTitle
-        anchors.horizontalCenter: parent.horizontalCenter
-        text: "SHORTCUTS"
-        foreground: root.fg
-        fontFamily: root.fontFamily
-      }
-    }
-
-    Column {
-      width: parent.width
-      spacing: Style.space(7)
-
-      CursorRow {
-        active: root.settingsCursor === 15
-
-        Row {
-          anchors.centerIn: parent
-          spacing: Style.space(6)
-
-          Text {
-            textFormat: Text.PlainText
-            text: "Enter"
-            width: Style.space(100)
-            color: root.fg
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
-          }
-
-          Button {
-            text: "Open app"
-            Layout.preferredWidth: Style.space(86)
-            focusable: true
-            selected: root.store !== null && root.store.enterOpens === "app"
-            bordered: true
-            fontSize: Style.font.bodySmall
-            fontFamily: root.fontFamily
-            foreground: root.fg
-            onClicked: if (root.store) root.store.setEnterOpens("app")
-          }
-
-          Button {
-            text: "Details"
-            Layout.preferredWidth: Style.space(72)
-            focusable: true
-            selected: root.store !== null && root.store.enterOpens === "detail"
-            bordered: true
-            fontSize: Style.font.bodySmall
-            fontFamily: root.fontFamily
-            foreground: root.fg
-            onClicked: if (root.store) root.store.setEnterOpens("detail")
-          }
-        }
-      }
-
-      CursorRow {
-        active: root.settingsCursor === 16
-
-        Row {
-          anchors.centerIn: parent
-          spacing: Style.space(6)
-
-          Text {
-            textFormat: Text.PlainText
-            text: "Hint bar"
-            width: Style.space(100)
-            color: root.fg
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
-          }
-
-          Button {
-            text: "On"
-            Layout.preferredWidth: Style.space(64)
-            focusable: true
-            selected: root.store !== null && root.store.shortcutBar
-            bordered: true
-            fontSize: Style.font.bodySmall
-            fontFamily: root.fontFamily
-            foreground: root.fg
-            onClicked: if (root.store) root.store.setShortcutBar(true)
-          }
-
-          Button {
-            text: "Off"
-            Layout.preferredWidth: Style.space(64)
-            focusable: true
-            selected: root.store !== null && !root.store.shortcutBar
-            bordered: true
-            fontSize: Style.font.bodySmall
-            fontFamily: root.fontFamily
-            foreground: root.fg
-            onClicked: if (root.store) root.store.setShortcutBar(false)
-          }
-        }
-      }
-
-      CursorRow {
-        active: root.settingsCursor === 17
-
-        Row {
-          anchors.centerIn: parent
-          spacing: Style.space(6)
-
-          Text {
-            textFormat: Text.PlainText
-            text: "Search"
-            width: Style.space(100)
-            color: root.fg
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
-          }
-
-          Button {
-            text: "/"
-            Layout.preferredWidth: Style.space(64)
-            focusable: true
-            selected: root.store !== null && root.store.searchKey === "/"
-            bordered: true
-            fontSize: Style.font.bodySmall
-            fontFamily: root.fontFamily
-            foreground: root.fg
-            onClicked: if (root.store) root.store.setSearchKey("/")
-          }
-
-          Button {
-            text: "Ctrl+F"
-            Layout.preferredWidth: Style.space(70)
-            focusable: true
-            selected: root.store !== null && root.store.searchKey === "ctrl+f"
-            bordered: true
-            fontSize: Style.font.bodySmall
-            fontFamily: root.fontFamily
-            foreground: root.fg
-            onClicked: if (root.store) root.store.setSearchKey("ctrl+f")
-          }
-        }
-      }
-
-      CursorRow {
-        active: root.settingsCursor === 18
-
-        Row {
-          anchors.centerIn: parent
-          spacing: Style.space(6)
-
-          Text {
-            textFormat: Text.PlainText
-            text: "DND"
-            width: Style.space(100)
-            color: root.fg
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
-          }
-
-          Button {
-            text: "d"
-            Layout.preferredWidth: Style.space(64)
-            focusable: true
-            selected: root.store !== null && root.store.dndKey === "d"
-            bordered: true
-            fontSize: Style.font.bodySmall
-            fontFamily: root.fontFamily
-            foreground: root.fg
-            onClicked: if (root.store) root.store.setDndKey("d")
-          }
-
-          Button {
-            text: "D"
-            Layout.preferredWidth: Style.space(64)
-            focusable: true
-            selected: root.store !== null && root.store.dndKey === "D"
-            bordered: true
-            fontSize: Style.font.bodySmall
-            fontFamily: root.fontFamily
-            foreground: root.fg
-            onClicked: if (root.store) root.store.setDndKey("D")
-          }
-        }
-      }
-
-      CursorRow {
-        active: root.settingsCursor === 19
-
-        Row {
-          anchors.centerIn: parent
-          spacing: Style.space(6)
-
-          Text {
-            textFormat: Text.PlainText
-            text: "Details"
-            width: Style.space(100)
-            color: root.fg
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
-          }
-
-          Button {
-            text: "i"
-            Layout.preferredWidth: Style.space(64)
-            focusable: true
-            selected: root.store !== null && root.store.detailKey === "i"
-            bordered: true
-            fontSize: Style.font.bodySmall
-            fontFamily: root.fontFamily
-            foreground: root.fg
-            onClicked: if (root.store) root.store.setDetailKey("i")
-          }
-
-          Button {
-            text: "I"
-            Layout.preferredWidth: Style.space(64)
-            focusable: true
-            selected: root.store !== null && root.store.detailKey === "I"
-            bordered: true
-            fontSize: Style.font.bodySmall
-            fontFamily: root.fontFamily
-            foreground: root.fg
-            onClicked: if (root.store) root.store.setDetailKey("I")
-          }
-        }
-      }
-
-      CursorRow {
-        active: root.settingsCursor === 20
-
-        Row {
-          anchors.centerIn: parent
-          spacing: Style.space(6)
-
-          Text {
-            textFormat: Text.PlainText
-            text: "Help"
-            width: Style.space(100)
-            color: root.fg
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
-          }
-
-          Button {
-            text: "?"
-            Layout.preferredWidth: Style.space(64)
-            focusable: true
-            selected: root.store !== null && root.store.helpKey === "?"
-            bordered: true
-            fontSize: Style.font.bodySmall
-            fontFamily: root.fontFamily
-            foreground: root.fg
-            onClicked: if (root.store) root.store.setHelpKey("?")
-          }
-
-          Button {
-            text: "F1"
-            Layout.preferredWidth: Style.space(64)
-            focusable: true
-            selected: root.store !== null && root.store.helpKey === "F1"
-            bordered: true
-            fontSize: Style.font.bodySmall
-            fontFamily: root.fontFamily
-            foreground: root.fg
-            onClicked: if (root.store) root.store.setHelpKey("F1")
-          }
-        }
-      }
-
-      CursorRow {
-        active: root.settingsCursor === 21
-
-        Row {
-          anchors.centerIn: parent
-          spacing: Style.space(6)
-
-          Text {
-            textFormat: Text.PlainText
-            text: "Settings"
-            width: Style.space(100)
-            color: root.fg
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
-          }
-
-          Button {
-            text: "s"
-            Layout.preferredWidth: Style.space(64)
-            focusable: true
-            selected: root.store !== null && root.store.settingsKey === "s"
-            bordered: true
-            fontSize: Style.font.bodySmall
-            fontFamily: root.fontFamily
-            foreground: root.fg
-            onClicked: if (root.store) root.store.setSettingsKey("s")
-          }
-
-          Button {
-            text: "Shift+P"
-            Layout.preferredWidth: Style.space(78)
-            focusable: true
-            selected: root.store !== null && root.store.settingsKey === "P"
-            bordered: true
-            fontSize: Style.font.bodySmall
-            fontFamily: root.fontFamily
-            foreground: root.fg
-            onClicked: if (root.store) root.store.setSettingsKey("P")
-          }
-        }
-      }
-    }
-  }
-
 
   onScreenListChanged: root.clampScreenCursor()
 
@@ -2345,18 +974,16 @@ Panel {
       marginY: root.store ? root.store.marginY : 12
       padding: root.store ? root.store.padding : 12
       desiredWidth: {
-        if (!root.horizontal) return Style.space(430)
+        if (root.settingsOpen) return Style.space(720)
+        if (root.selectedEntry !== null) return Style.space(560)
+        if (!root.horizontal) return Style.space(440)
         var spacing = root.store ? root.store.cardSpacing : 10
         var count = root.matchedEntries.length
-        var cards = count > 0 ? count * Style.space(280) + (count - 1) * spacing : 0
-        var content = Math.max(Style.space(480), cards)
-        if (root.settingsOpen) content = Math.max(content, Style.space(920))
-        else if (root.selectedEntry !== null) content = Math.max(content, Style.space(760))
-        return content
+        var cards = count > 0 ? count * root.compactWidth + (count - 1) * spacing : 0
+        return Math.max(Style.space(480), cards)
       }
       desiredHeight: (contentLoader.item ? contentLoader.item.activeContentHeight : 0)
         + (root.footerVisible && contentLoader.item ? contentLoader.item.footerHeight : 0)
-        + (root.settingsOpen ? Style.space(16) : 0)
       focusTarget: contentLoader.item ? contentLoader.item.keyCatcher : null
 
       // Publish the real usable height so the virtualized list can cap itself
@@ -2395,19 +1022,18 @@ Panel {
       property alias keyCatcher: keyCatcher
       property alias searchField: searchField
       property alias scrollView: scrollView
-      property real cardWidth: 430
+      property real cardWidth: 440
       readonly property real footerHeight: shortcutFooter.height
       readonly property real activeContentHeight: {
         var h = headerRow.height + headerSeparator.height
         var count = 2
-        if (root.searchOpen) { h += searchField.height; count++ }
+        if (root.searchOpen) { h += searchRow.height; count++ }
         if (root.clearArmed) { h += clearBanner.height; count++ }
         var view = root.helpOpen ? helpColumn
-          : (root.settingsOpen ? settingsColumn
-          : (root.selectedEntry !== null ? detailColumn : listSection))
-        if (view) h += view.implicitHeight
-        count++
-        return h + Style.space(10) * (count - 1)
+          : (root.settingsOpen ? settingsView
+          : (root.selectedEntry !== null ? detailView : listSection))
+        if (view) { h += view.implicitHeight; count++ }
+        return h + Style.space(10) * Math.max(0, count - 1)
       }
 
       // Maximum height of the virtualized list inside the card. The card is
@@ -2416,7 +1042,7 @@ Panel {
       readonly property real listMaxHeight: {
         var pad = root.store ? root.store.padding : 12
         var chrome = headerRow.height + headerSeparator.height + Style.space(10) * 2
-        if (root.searchOpen) chrome += searchField.height + Style.space(10)
+        if (root.searchOpen) chrome += searchRow.height + Style.space(10)
         if (root.clearArmed) chrome += clearBanner.height + Style.space(10)
         var footer = root.footerVisible ? contentRoot.footerHeight : 0
         // Small safety margin for the card border, which is not exposed here.
@@ -2424,17 +1050,17 @@ Panel {
           root.windowAvailableH - pad * 2 - Style.space(6) - footer - chrome)
       }
 
-      // Walk the settings tree to the highlighted CursorRow. The rows are
-      // nested inside section Columns, and the cursor can move past the card
-      // when the settings list is taller than the screen.
+      // Walk the settings tree to the highlighted row. The rows are nested
+      // inside category columns, and the cursor can move past the card when
+      // the settings list is taller than the screen.
       function activeSettingsRow(item) {
         var children = item ? item.children : null
         if (!children) return null
         for (var i = 0; i < children.length; i++) {
           var child = children[i]
           if (!child) continue
-          if (child.active === true) return child
-          var nested = root.activeContent ? root.activeContent.activeSettingsRow(child) : null
+          if (child.active === true || child.hasCursor === true) return child
+          var nested = contentRoot.activeSettingsRow(child)
           if (nested) return nested
         }
         return null
@@ -2442,7 +1068,7 @@ Panel {
 
       function scrollSettingsCursorIntoView() {
         if (!root.settingsOpen) return
-        var row = contentRoot.activeSettingsRow(settingsColumn)
+        var row = contentRoot.activeSettingsRow(settingsView)
         if (!row) return
         var margin = Style.space(16)
         var y = row.mapToItem(contentColumn, 0, 0).y
@@ -2498,6 +1124,10 @@ Panel {
         onCloseRequested: { root.activeContent = contentRoot; root.closeView() }
         onTabRequested: function(direction) {
           root.activeContent = contentRoot
+          if (root.settingsOpen) {
+            root.switchSettingsCategory(direction)
+            return
+          }
           root.close()
           root.switchPanel(direction)
         }
@@ -2512,6 +1142,10 @@ Panel {
           if (root.searchOpen || root.settingsOpen) return
           if (root.helpOpen) {
             if (t === root.store.helpKey) root.toggleHelp()
+            return
+          }
+          if (root.selectedEntry !== null) {
+            if (t === "o") root.activateEntry(root.selectedEntry)
             return
           }
           if (t === root.store.dndKey) root.toggleDnd()
@@ -2544,33 +1178,85 @@ Panel {
             width: scrollView.width - Style.space(10)
             spacing: Style.space(10)
 
-            Item {
+            RowLayout {
               id: headerRow
               width: parent.width
-              height: Math.max(headerTitle.implicitHeight, headerActions.implicitHeight)
+              spacing: Style.space(7)
 
-              PanelSectionHeader {
-                id: headerTitle
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.verticalCenter: parent.verticalCenter
-                text: root.settingsOpen
-                  ? "SETTINGS"
-                  : (root.helpOpen ? "SHORTCUTS"
-                    : (root.selectedEntry !== null ? "NOTIFICATION" : "NOTIFICATIONS"))
+              PanelActionButton {
+                visible: root.settingsOpen || root.helpOpen || root.selectedEntry !== null || root.searchOpen
+                size: Style.space(28)
+                iconText: "󰅁"
+                tooltipText: "Back (Esc)"
                 foreground: root.fg
+                hoverColor: Commons.Color.accent
                 fontFamily: root.fontFamily
+                onClicked: root.closeView()
+              }
+
+              ColumnLayout {
+                Layout.fillWidth: true
+                spacing: Style.space(1)
+
+                RowLayout {
+                  Layout.fillWidth: true
+                  spacing: Style.space(7)
+
+                  Text {
+                    Layout.fillWidth: true
+                    textFormat: Text.PlainText
+                    text: root.headerTitle()
+                    color: root.fg
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.heading
+                    font.bold: true
+                    elide: Text.ElideRight
+                  }
+
+                  BorderSurface {
+                    visible: !root.settingsOpen && !root.helpOpen
+                      && root.selectedEntry === null && !root.searchOpen
+                      && root.unseenCount > 0
+                    implicitWidth: unreadPillText.implicitWidth + Style.space(12)
+                    implicitHeight: unreadPillText.implicitHeight + Style.space(5)
+                    radius: height / 2
+                    color: Style.selectedFillFor(root.fg, Commons.Color.accent)
+                    borderSpec: Border.controlSpec("normal", root.fg, Commons.Color.accent)
+
+                    Text {
+                      id: unreadPillText
+                      anchors.centerIn: parent
+                      textFormat: Text.PlainText
+                      text: root.unseenCount > 99 ? "99+" : String(root.unseenCount)
+                      color: Commons.Color.accent
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      font.bold: true
+                    }
+                  }
+                }
+
+                Text {
+                  Layout.fillWidth: true
+                  textFormat: Text.PlainText
+                  text: root.headerSubtitle()
+                  color: Qt.darker(root.fg, 1.55)
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  elide: Text.ElideRight
+                }
               }
 
               Row {
                 id: headerActions
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
                 spacing: 0
 
                 PanelActionButton {
-                  visible: !root.settingsOpen && !root.helpOpen && root.selectedEntry === null
+                  visible: !root.settingsOpen && !root.helpOpen
+                    && root.selectedEntry === null && !root.searchOpen
+                  size: Style.space(28)
                   iconText: "󰍉"
-                  tooltipText: "Search (/)"
+                  tooltipText: "Search (" + root.keyLabel(root.store ? root.store.searchKey : "/") + ")"
                   foreground: root.fg
                   hoverColor: Commons.Color.accent
                   fontFamily: root.fontFamily
@@ -2579,6 +1265,18 @@ Panel {
 
                 PanelActionButton {
                   visible: !root.settingsOpen && !root.helpOpen
+                  size: Style.space(28)
+                  iconText: root.dnd ? "󰂜" : "󰂛"
+                  tooltipText: root.dnd ? "Allow notifications" : "Silence notifications"
+                  foreground: root.dnd ? Commons.Color.accent : Qt.darker(root.fg, 1.5)
+                  hoverColor: Commons.Color.accent
+                  fontFamily: root.fontFamily
+                  onClicked: root.toggleDnd()
+                }
+
+                PanelActionButton {
+                  visible: !root.settingsOpen && !root.helpOpen
+                  size: Style.space(28)
                   iconText: "󰒓"
                   tooltipText: "Settings (" + root.keyLabel(root.store ? root.store.settingsKey : "s") + ")"
                   foreground: root.fg
@@ -2589,33 +1287,15 @@ Panel {
 
                 PanelActionButton {
                   visible: !root.settingsOpen && !root.helpOpen
-                  iconText: root.dnd ? "󰂜" : "󰂛"
-                  tooltipText: root.dnd ? "Allow notifications" : "Silence notifications"
-                  foreground: root.dnd ? Commons.Color.accent : Qt.darker(root.fg, 1.5)
-                  hoverColor: Commons.Color.accent
-                  fontFamily: root.fontFamily
-                  onClicked: root.toggleDnd()
-                }
-
-                PanelActionButton {
-                  visible: !root.settingsOpen && !root.helpOpen && root.selectedEntry === null
+                    && root.selectedEntry === null
+                  size: Style.space(28)
                   iconText: "󰆴"
                   tooltipText: "Clear all"
                   foreground: root.fg
                   hoverColor: Commons.Color.urgent
                   fontFamily: root.fontFamily
                   enabled: root.entries.length > 0
-                  onClicked: root.clearAll()
-                }
-
-                PanelActionButton {
-                  visible: root.settingsOpen || root.helpOpen || root.selectedEntry !== null
-                  iconText: "󰅁"
-                  tooltipText: "Back"
-                  foreground: root.fg
-                  hoverColor: Commons.Color.accent
-                  fontFamily: root.fontFamily
-                  onClicked: root.closeView()
+                  onClicked: root.requestClear()
                 }
               }
             }
@@ -2626,88 +1306,122 @@ Panel {
               width: parent.width
             }
 
-            TextField {
-              id: searchField
+            Item {
+              id: searchRow
               width: parent.width
+              height: Math.max(searchField.implicitHeight, Style.space(32))
               visible: root.searchOpen
-              placeholderText: "Search app, title or body"
-              foreground: root.fg
-              accent: Commons.Color.accent
-              font.pixelSize: Style.font.bodySmall
-              hasCursor: true
-              onTextChanged: root.query = text
-              Keys.onEscapePressed: root.closeSearch()
-              Keys.onReturnPressed: {
-                keyCatcher.forceActiveFocus()
-                if (root.cursorIndex < 0 && root.matchedEntries.length > 0) root.cursorIndex = 0
-                root.activateCursor()
+
+              TextField {
+                id: searchField
+                anchors.fill: parent
+                leftPadding: Style.space(30)
+                rightPadding: Style.space(30)
+                placeholderText: "Search app, title or body"
+                foreground: root.fg
+                accent: Commons.Color.accent
+                font.pixelSize: Style.font.bodySmall
+                hasCursor: true
+                onTextChanged: root.query = text
+                Keys.onEscapePressed: root.closeSearch()
+                Keys.onReturnPressed: {
+                  keyCatcher.forceActiveFocus()
+                  if (root.cursorIndex < 0 && root.matchedEntries.length > 0) root.cursorIndex = 0
+                  root.activateCursor()
+                }
+                Keys.onDownPressed: {
+                  keyCatcher.forceActiveFocus()
+                  root.moveCursor(1)
+                }
+                Keys.onUpPressed: {
+                  keyCatcher.forceActiveFocus()
+                  root.moveCursor(-1)
+                }
               }
-              Keys.onDownPressed: {
-                keyCatcher.forceActiveFocus()
-                root.moveCursor(1)
+
+              Text {
+                anchors.left: parent.left
+                anchors.leftMargin: Style.space(10)
+                anchors.verticalCenter: parent.verticalCenter
+                textFormat: Text.PlainText
+                text: "󰍉"
+                color: Qt.darker(root.fg, 1.6)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
               }
-              Keys.onUpPressed: {
-                keyCatcher.forceActiveFocus()
-                root.moveCursor(-1)
+
+              PanelActionButton {
+                visible: root.query !== ""
+                anchors.right: parent.right
+                anchors.rightMargin: Style.space(4)
+                anchors.verticalCenter: parent.verticalCenter
+                size: Style.space(24)
+                iconText: "󰅖"
+                tooltipText: "Clear search"
+                foreground: root.fg
+                hoverColor: Commons.Color.urgent
+                fontFamily: root.fontFamily
+                onClicked: {
+                  searchField.text = ""
+                  root.query = ""
+                  searchField.forceActiveFocus()
+                }
               }
             }
 
-            Text {
+            BorderSurface {
               id: clearBanner
               visible: root.clearArmed
               width: parent.width
-              textFormat: Text.PlainText
-              text: "Press Shift+C again to clear all notifications"
-              color: Commons.Color.urgent
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
-              wrapMode: Text.WordWrap
+              implicitHeight: clearBannerRow.implicitHeight + Style.space(14)
+              radius: Style.cornerRadius
+              color: Style.selectedFillFor(Commons.Color.urgent, Commons.Color.urgent)
+              borderSpec: Border.controlSpec("normal", Commons.Color.urgent, Commons.Color.urgent)
+
+              RowLayout {
+                id: clearBannerRow
+                anchors.fill: parent
+                anchors.margins: Style.space(7)
+                spacing: Style.space(8)
+
+                Text {
+                  textFormat: Text.PlainText
+                  text: "󰀪"
+                  color: Commons.Color.urgent
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                }
+
+                Text {
+                  Layout.fillWidth: true
+                  textFormat: Text.PlainText
+                  text: "Clear every notification?"
+                  color: root.fg
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                }
+
+                Button {
+                  text: "Clear now"
+                  bordered: true
+                  foreground: Commons.Color.urgent
+                  accent: Commons.Color.urgent
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.caption
+                  onClicked: root.requestClear()
+                }
+              }
             }
 
-            // ---- shortcuts help ----
-            Column {
+            HelpView {
               id: helpColumn
               visible: root.helpOpen
-              width: Math.min(parent.width, Style.space(460))
+              width: Math.min(parent.width, Style.space(500))
               x: Math.max(0, (parent.width - width) / 2)
-              spacing: Style.space(10)
-
-              GridLayout {
-                width: parent.width
-                columns: 2
-                columnSpacing: Style.space(18)
-                rowSpacing: Style.space(6)
-
-                Text { text: "↑↓ / jk"; color: Commons.Color.accent; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-                Text { Layout.fillWidth: true; text: "Select a notification"; color: root.fg; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-
-                Text { text: "Enter"; color: Commons.Color.accent; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-                Text { Layout.fillWidth: true; text: root.store && root.store.enterOpens === "detail" ? "Open the detail card" : "Focus the sending app"; color: root.fg; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-
-                Text { text: root.keyLabel(root.store ? root.store.detailKey : "i"); color: Commons.Color.accent; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-                Text { Layout.fillWidth: true; text: "Open the detail card"; color: root.fg; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-
-                Text { text: root.keyLabel(root.store ? root.store.searchKey : "/"); color: Commons.Color.accent; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-                Text { Layout.fillWidth: true; text: "Search app, title and body"; color: root.fg; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-
-                Text { text: root.keyLabel(root.store ? root.store.settingsKey : "s"); color: Commons.Color.accent; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-                Text { Layout.fillWidth: true; text: "Open settings"; color: root.fg; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-
-                Text { text: root.keyLabel(root.store ? root.store.dndKey : "d"); color: Commons.Color.accent; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-                Text { Layout.fillWidth: true; text: "Toggle Do Not Disturb"; color: root.fg; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-
-                Text { text: root.keyLabel(root.store ? root.store.helpKey : "?"); color: Commons.Color.accent; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-                Text { Layout.fillWidth: true; text: "Show or hide this help"; color: root.fg; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-
-                Text { text: "g / G"; color: Commons.Color.accent; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-                Text { Layout.fillWidth: true; text: "First / last notification"; color: root.fg; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-
-                Text { text: "Shift+C"; color: Commons.Color.accent; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-                Text { Layout.fillWidth: true; text: "Clear all (twice unless disabled)"; color: root.fg; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-
-                Text { text: "Esc"; color: Commons.Color.accent; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-                Text { Layout.fillWidth: true; text: "Back, then close the center"; color: root.fg; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-              }
+              groups: root.helpGroups
+              foreground: root.fg
+              accent: Commons.Color.accent
+              fontFamily: root.fontFamily
             }
 
             // ---- list ----
@@ -2717,30 +1431,66 @@ Panel {
               spacing: root.store ? root.store.cardSpacing : 10
               visible: !root.settingsOpen && !root.helpOpen && root.selectedEntry === null
 
-              // Empty state.
               Column {
                 visible: root.matchedEntries.length === 0
                 width: parent.width
                 spacing: Style.space(6)
-                topPadding: Style.space(26)
-                bottomPadding: Style.space(26)
+                topPadding: Style.space(30)
+                bottomPadding: Style.space(30)
 
-                Text {
+                Rectangle {
                   anchors.horizontalCenter: parent.horizontalCenter
-                  textFormat: Text.PlainText
-                  text: "󰂚"
-                  color: Qt.darker(root.fg, 1.8)
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.displayLarge
+                  width: Style.space(58)
+                  height: width
+                  radius: width / 2
+                  color: Style.normalFillFor(root.fg, Commons.Color.accent)
+                  border.width: Math.max(1, Style.space(1))
+                  border.color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.14)
+
+                  Text {
+                    anchors.centerIn: parent
+                    textFormat: Text.PlainText
+                    text: root.query !== "" ? "󰍉" : "󰂚"
+                    color: Qt.darker(root.fg, 1.5)
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.displayLarge
+                  }
                 }
 
                 Text {
                   anchors.horizontalCenter: parent.horizontalCenter
                   textFormat: Text.PlainText
-                  text: root.query !== "" && root.entries.length > 0 ? "No matches" : "No notifications"
-                  color: Qt.darker(root.fg, 1.6)
+                  text: root.query !== "" && root.entries.length > 0 ? "No matches" : "All caught up"
+                  color: root.fg
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
+                  font.bold: true
+                }
+
+                Text {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  width: Math.min(parent.width, Style.space(300))
+                  horizontalAlignment: Text.AlignHCenter
+                  textFormat: Text.PlainText
+                  text: root.query !== "" && root.entries.length > 0
+                    ? "Try a different app, title or phrase."
+                    : "New notifications will appear here as they arrive."
+                  color: Qt.darker(root.fg, 1.6)
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+
+                Button {
+                  visible: root.query !== ""
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  text: "Clear search"
+                  bordered: true
+                  foreground: root.fg
+                  accent: Commons.Color.accent
+                  fontFamily: root.fontFamily
+                  fontSize: Style.font.bodySmall
+                  onClicked: root.closeSearch()
                 }
               }
 
@@ -2771,16 +1521,35 @@ Panel {
                 section.delegate: Item {
                   required property string section
                   width: listView.width
-                  height: sectionLabel.implicitHeight + Style.space(4)
+                  height: Style.space(24)
 
-                  Text {
-                    textFormat: Text.PlainText
-                    id: sectionLabel
-                    text: parent.section
-                    color: Qt.darker(root.fg, 1.7)
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                    leftPadding: Style.space(2)
+                  RowLayout {
+                    anchors.fill: parent
+                    spacing: Style.space(8)
+
+                    Text {
+                      textFormat: Text.PlainText
+                      text: parent.parent.section
+                      color: Qt.darker(root.fg, 1.65)
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      font.bold: true
+                      font.letterSpacing: 0.8
+                    }
+
+                    Rectangle {
+                      Layout.fillWidth: true
+                      height: 1
+                      color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.08)
+                    }
+
+                    Text {
+                      textFormat: Text.PlainText
+                      text: String(root.dayCounts[parent.parent.section] || 0)
+                      color: Qt.darker(root.fg, 1.75)
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                    }
                   }
                 }
 
@@ -2790,6 +1559,19 @@ Panel {
                   entry: modelData.entry
                   rowIndex: index
                   cursorActive: root.cursorIndex === index
+                  unread: root.isUnread(modelData.entry)
+                  showBody: !root.store || !root.store.hideBodies
+                  iconSource: root.entryIcon(modelData.entry)
+                  bodyMarkup: root.bodyText(modelData.entry)
+                  timeText: Model.timeAgo(modelData.entry.timestamp, Date.now())
+                  cardText: Commons.Color.notifications.text
+                  accent: Commons.Color.accent
+                  urgent: Commons.Color.urgent
+                  fontFamily: root.fontFamily
+                  onHovered: function(index) { root.cursorIndex = index }
+                  onDetailsRequested: function(entry) { root.openDetail(entry) }
+                  onAppRequested: function(entry) { root.activateEntry(entry) }
+                  onRemoveRequested: function(entry) { root.deleteEntry(entry) }
                 }
               }
 
@@ -2803,7 +1585,7 @@ Panel {
                 ListView {
                   id: bandList
                   width: parent.width
-                  height: Style.space(88)
+                  height: count === 0 ? 0 : Style.space(100)
                   orientation: ListView.Horizontal
                   spacing: root.store ? root.store.cardSpacing : 10
                   clip: true
@@ -2813,7 +1595,7 @@ Panel {
                   // Cards have a fixed width; center the row when it does not
                   // fill the band, and let it scroll when it does.
                   readonly property real itemsWidth: count > 0
-                    ? count * Style.space(280) + (count - 1) * spacing : 0
+                    ? count * root.compactWidth + (count - 1) * spacing : 0
                   leftMargin: Math.max(0, (width - itemsWidth) / 2)
                   rightMargin: leftMargin
 
@@ -2823,6 +1605,20 @@ Panel {
                     entry: modelData.entry
                     rowIndex: index
                     cursorActive: root.cursorIndex === index
+                    unread: root.isUnread(modelData.entry)
+                    showBody: !root.store || !root.store.hideBodies
+                    preferredWidth: root.compactWidth
+                    iconSource: root.entryIcon(modelData.entry)
+                    bodyMarkup: root.bodyText(modelData.entry)
+                    timeText: Model.timeAgo(modelData.entry.timestamp, Date.now())
+                    cardText: Commons.Color.notifications.text
+                    accent: Commons.Color.accent
+                    urgent: Commons.Color.urgent
+                    fontFamily: root.fontFamily
+                    onHovered: function(index) { root.cursorIndex = index }
+                    onDetailsRequested: function(entry) { root.openDetail(entry) }
+                    onAppRequested: function(entry) { root.activateEntry(entry) }
+                    onRemoveRequested: function(entry) { root.deleteEntry(entry) }
                   }
                 }
 
@@ -2866,337 +1662,47 @@ Panel {
             }
 
             // ---- detail ----
-            Column {
-              id: detailColumn
+            DetailView {
+              id: detailView
+              visible: !root.settingsOpen && !root.helpOpen && root.selectedEntry !== null
               width: Math.min(parent.width, root.horizontal ? Style.space(760) : Style.space(560))
               x: Math.max(0, (parent.width - width) / 2)
-              spacing: Style.space(10)
-              visible: !root.settingsOpen && !root.helpOpen && root.selectedEntry !== null
-
-              RowLayout {
-                width: parent.width
-                spacing: Style.space(6)
-
-                ColumnLayout {
-                  Layout.fillWidth: true
-                  spacing: Style.space(1)
-
-                  Text {
-                    Layout.fillWidth: true
-                    textFormat: Text.PlainText
-                    text: root.entry.app.length > 0 ? root.entry.app : "Notification"
-                    color: root.fg
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.body
-                    font.bold: true
-                    elide: Text.ElideRight
-                  }
-
-                  Text {
-                    Layout.fillWidth: true
-                    textFormat: Text.PlainText
-                    text: Qt.formatDateTime(new Date(root.entry.timestamp), "ddd d MMM yyyy · HH:mm")
-                    color: Qt.darker(root.fg, 1.5)
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                    elide: Text.ElideRight
-                  }
-                }
-
-                PanelActionButton {
-                  iconText: "󰆴"
-                  tooltipText: "Remove"
-                  foreground: root.fg
-                  hoverColor: Commons.Color.urgent
-                  fontFamily: root.fontFamily
-                  onClicked: root.deleteEntry(root.entry)
-                }
-              }
-
-              // The dedicated detail card: full summary, full body, image when
-              // the notification carries one.
-              BorderSurface {
-                id: detailCard
-                width: parent.width
-                radius: root.cornerRadius
-                color: Commons.Color.notifications.background
-                borderSpec: Border.surfaceSpec("notifications", "border", Commons.Color.notifications.border, Math.max(1, Style.space(2)))
-                clip: true
-                // Anchored content does not size a Rectangle implicitly — the
-                // card must carry its own height like the list rows do.
-                implicitHeight: detailContent.implicitHeight + borderTop + borderBottom
-
-                ColumnLayout {
-                  id: detailContent
-                  anchors.top: parent.top
-                  anchors.left: parent.left
-                  anchors.right: parent.right
-                  anchors.topMargin: detailCard.borderTop
-                  anchors.leftMargin: detailCard.borderLeft
-                  anchors.rightMargin: detailCard.borderRight
-                  anchors.bottomMargin: detailCard.borderBottom
-                  spacing: Style.space(8)
-
-                  RowLayout {
-                    Layout.fillWidth: true
-                    Layout.leftMargin: Style.space(12)
-                    Layout.rightMargin: Style.space(12)
-                    Layout.topMargin: Style.space(12)
-                    spacing: Style.space(12)
-
-                    Item {
-                      id: detailIconSlot
-                      Layout.preferredWidth: Style.space(44)
-                      Layout.preferredHeight: Style.space(44)
-                      Layout.alignment: Qt.AlignTop
-
-                      property bool imageFailed: false
-                      readonly property string source: root.iconSource(root.previewSource(root.entry))
-                      readonly property bool showGlyph: (source === "" || imageFailed) && root.entry.glyph.length > 0
-
-                      Image {
-                        anchors.fill: parent
-                        visible: !detailIconSlot.showGlyph
-                        source: detailIconSlot.source
-                        sourceSize.width: detailIconSlot.width * Screen.devicePixelRatio
-                        sourceSize.height: detailIconSlot.height * Screen.devicePixelRatio
-                        fillMode: Image.PreserveAspectFit
-                        asynchronous: true
-                        smooth: true
-                        onStatusChanged: detailIconSlot.imageFailed = (status === Image.Error)
-                      }
-
-                      Text {
-                        anchors.centerIn: parent
-                        textFormat: Text.PlainText
-                        visible: detailIconSlot.showGlyph
-                        text: root.entry.glyph
-                        color: Commons.Color.notifications.text
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.icon
-                      }
-                    }
-
-                    Text {
-                      Layout.fillWidth: true
-                      Layout.alignment: Qt.AlignTop
-                      textFormat: Text.PlainText
-                      visible: root.entry.summary.length > 0
-                      text: root.entry.summary
-                      color: Commons.Color.notifications.text
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.heading
-                      font.bold: true
-                      wrapMode: Text.WordWrap
-                    }
-                  }
-
-                  Text {
-                    Layout.fillWidth: true
-                    Layout.leftMargin: Style.space(12)
-                    Layout.rightMargin: Style.space(12)
-                    Layout.topMargin: Style.space(2)
-                    visible: root.entry.body.length > 0
-                    text: root.bodyText(root.entry)
-                    textFormat: Text.StyledText
-                    color: Qt.darker(Commons.Color.notifications.text, 1.15)
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.body
-                    wrapMode: Text.WordWrap
-                  }
-
-                  Image {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 160
-                    Layout.leftMargin: Style.space(12)
-                    Layout.rightMargin: Style.space(12)
-                    Layout.topMargin: Style.space(2)
-                    visible: source.length > 0 && status !== Image.Error
-                    source: Model.safeImageSource(root.entry.image)
-                    // Bound the decoded texture, not just the painted size: a
-                    // full-resolution notification image otherwise lands in
-                    // VRAM at its native dimensions.
-                    sourceSize.width: Math.round(contentRoot.cardWidth * Screen.devicePixelRatio)
-                    sourceSize.height: Math.round(Style.space(160) * Screen.devicePixelRatio)
-                    fillMode: Image.PreserveAspectFit
-                    asynchronous: true
-                    smooth: true
-                  }
-
-                  // Bottom inset of the card.
-                  Item {
-                    Layout.preferredWidth: 1
-                    Layout.preferredHeight: Style.space(10)
-                  }
-                }
-              }
+              entry: root.entry
+              iconSource: root.entryIcon(root.entry)
+              bodyMarkup: root.bodyText(root.entry)
+              bodyHidden: !!root.store && root.store.hideBodies
+              imageSource: root.previewImage(root.entry)
+              timeText: root.detailTime(root.entry) + (root.entry.timestamp ? " · " + Model.timeAgo(root.entry.timestamp, Date.now()) : "")
+              foreground: root.fg
+              accent: Commons.Color.accent
+              urgent: Commons.Color.urgent
+              cardText: Commons.Color.notifications.text
+              fontFamily: root.fontFamily
+              onOpenAppRequested: function(entry) { root.activateEntry(entry) }
+              onRemoveRequested: function(entry) { root.deleteEntry(entry) }
             }
 
             // ---- settings ----
-            Column {
-              id: settingsColumn
-              width: parent.width
+            SettingsView {
+              id: settingsView
               visible: root.settingsOpen
-              spacing: 0
-
-              RowLayout {
-                id: settingsSectionsRow
-                width: parent.width
-                visible: root.horizontal
-                spacing: 0
-                readonly property real cellWidth: Math.max(
-                  Style.space(240),
-                  (width - Style.space(6)) / 7)
-
-      LayoutSettings {
-        Layout.preferredWidth: settingsSectionsRow.cellWidth
-        Layout.minimumWidth: settingsSectionsRow.cellWidth
-        Layout.maximumWidth: settingsSectionsRow.cellWidth
-        Layout.alignment: Qt.AlignTop
-      }
-      Rectangle {
-        Layout.preferredWidth: 1
-        Layout.fillHeight: true
-        color: Qt.darker(root.fg, 2.6)
-        opacity: 0.8
-      }
-      SpacingSettings {
-        Layout.preferredWidth: settingsSectionsRow.cellWidth
-        Layout.minimumWidth: settingsSectionsRow.cellWidth
-        Layout.maximumWidth: settingsSectionsRow.cellWidth
-        Layout.alignment: Qt.AlignTop
-      }
-      Rectangle {
-        Layout.preferredWidth: 1
-        Layout.fillHeight: true
-        color: Qt.darker(root.fg, 2.6)
-        opacity: 0.8
-      }
-      PositionSettings {
-        Layout.preferredWidth: settingsSectionsRow.cellWidth
-        Layout.minimumWidth: settingsSectionsRow.cellWidth
-        Layout.maximumWidth: settingsSectionsRow.cellWidth
-        Layout.alignment: Qt.AlignTop
-      }
-      Rectangle {
-        Layout.preferredWidth: 1
-        Layout.fillHeight: true
-        color: Qt.darker(root.fg, 2.6)
-        opacity: 0.8
-      }
-      BarIconSettings {
-        Layout.preferredWidth: settingsSectionsRow.cellWidth
-        Layout.minimumWidth: settingsSectionsRow.cellWidth
-        Layout.maximumWidth: settingsSectionsRow.cellWidth
-        Layout.alignment: Qt.AlignTop
-      }
-      Rectangle {
-        Layout.preferredWidth: 1
-        Layout.fillHeight: true
-        color: Qt.darker(root.fg, 2.6)
-        opacity: 0.8
-      }
-      PrivacySettings {
-        Layout.preferredWidth: settingsSectionsRow.cellWidth
-        Layout.minimumWidth: settingsSectionsRow.cellWidth
-        Layout.maximumWidth: settingsSectionsRow.cellWidth
-        Layout.alignment: Qt.AlignTop
-      }
-      Rectangle {
-        Layout.preferredWidth: 1
-        Layout.fillHeight: true
-        color: Qt.darker(root.fg, 2.6)
-        opacity: 0.8
-      }
-      ShortcutSettings {
-        Layout.preferredWidth: settingsSectionsRow.cellWidth
-        Layout.minimumWidth: settingsSectionsRow.cellWidth
-        Layout.maximumWidth: settingsSectionsRow.cellWidth
-        Layout.alignment: Qt.AlignTop
-      }
-      Rectangle {
-        Layout.preferredWidth: 1
-        Layout.fillHeight: true
-        color: Qt.darker(root.fg, 2.6)
-        opacity: 0.8
-      }
-      ClearSettings {
-        Layout.preferredWidth: settingsSectionsRow.cellWidth
-        Layout.minimumWidth: settingsSectionsRow.cellWidth
-        Layout.maximumWidth: settingsSectionsRow.cellWidth
-        Layout.alignment: Qt.AlignTop
-      }
-              }
-
-              Column {
-                width: parent.width
-                visible: !root.horizontal
-                spacing: 0
-
-      LayoutSettings {
-        width: parent.width
-      }
-      SettingsDivider { }
-      SpacingSettings {
-        width: parent.width
-      }
-      SettingsDivider { }
-      PositionSettings {
-        width: parent.width
-      }
-      SettingsDivider { }
-      BarIconSettings {
-        width: parent.width
-      }
-      SettingsDivider { }
-      PrivacySettings {
-        width: parent.width
-      }
-      SettingsDivider { }
-      ShortcutSettings {
-        width: parent.width
-      }
-      SettingsDivider { }
-      ClearSettings {
-        width: parent.width
-      }
-              }
+              width: parent.width
+              panel: root
             }
           }
         }
 
-        Item {
+        HintBar {
           id: shortcutFooter
           visible: root.footerVisible
           anchors.left: parent.left
           anchors.right: parent.right
           anchors.bottom: parent.bottom
-          height: visible ? Math.max(Style.space(28), hintText.implicitHeight + Style.space(8)) : 0
-
-          Rectangle {
-            anchors.top: parent.top
-            width: parent.width
-            height: 1
-            color: Qt.darker(root.fg, 2.6)
-            opacity: 0.7
-          }
-
-          Text {
-            id: hintText
-            anchors.fill: parent
-            anchors.leftMargin: Style.space(12)
-            anchors.rightMargin: Style.space(12)
-            anchors.topMargin: Style.space(4)
-            anchors.bottomMargin: Style.space(4)
-            verticalAlignment: Text.AlignVCenter
-            horizontalAlignment: Text.AlignHCenter
-            textFormat: Text.PlainText
-            text: root.shortcutHint()
-            color: Qt.darker(root.fg, 1.6)
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-            wrapMode: Text.WordWrap
-          }
+          height: visible ? implicitHeight : 0
+          hints: root.hintItems()
+          foreground: root.fg
+          accent: Commons.Color.accent
+          fontFamily: root.fontFamily
         }
 
         Item {

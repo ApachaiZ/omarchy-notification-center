@@ -1,9 +1,9 @@
 import QtQuick
 import Quickshell
-import Quickshell.Io
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
+import "components"
 
 // Bar host for the notification center: the bell icon, the unread badge and
 // the DND state, all fed by the always-loaded Panel (Panel.qml owns the data).
@@ -13,7 +13,7 @@ BarWidget {
   id: root
   moduleName: "apach.notifications"
 
-  // Data lives in Store.qml (always loaded, cheap); the panel UI in
+  // Data lives in the shared StoreSingleton (always loaded, cheap); the panel UI in
   // Panel.qml is instantiated on first use so an unanswered center costs no
   // QML widget tree per screen.
   property bool panelActive: false
@@ -22,7 +22,7 @@ BarWidget {
   readonly property var hostWindow: QsWindow.window
   readonly property string hostScreenName: hostWindow && hostWindow.screen
     ? String(hostWindow.screen.name || "") : ""
-  readonly property var store: storeLoader.item
+  readonly property var store: StoreSingleton
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
   readonly property bool dnd: store ? store.dnd === true : false
   readonly property int unseen: store ? (store.unseenCount || 0) : 0
@@ -45,7 +45,11 @@ BarWidget {
   }
 
   function closeSelf() {
-    if (panelLoader.item) panelLoader.item.close()
+    // A loaded but hidden panel must not be "closed" again: close() marks
+    // every notification seen. Opening the center within the 30-second
+    // unload window used to run this on the stale hidden instance and wipe
+    // the unread badge before the user saw it.
+    if (panelLoader.item && panelLoader.item.opened) panelLoader.item.close()
   }
 
   function anyOpen() {
@@ -126,14 +130,6 @@ BarWidget {
   onOpenedChanged: {
     if (root.opened) unloadTimer.stop()
     else if (root.panelActive) unloadTimer.restart()
-  }
-
-  Loader {
-    id: storeLoader
-    active: true
-    source: Qt.resolvedUrl("Store.qml")
-    visible: false
-    onLoaded: root.injectPanel()
   }
 
   Loader {

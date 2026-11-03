@@ -1,0 +1,14 @@
+singleton StoreSingleton 1.0 StoreSingleton.qml
+CompactCard 1.0 CompactCard.qml
+DetailView 1.0 DetailView.qml
+HelpView 1.0 HelpView.qml
+HintBar 1.0 HintBar.qml
+IconTile 1.0 IconTile.qml
+KeyCap 1.0 KeyCap.qml
+ModeTile 1.0 ModeTile.qml
+NotificationRow 1.0 NotificationRow.qml
+PlacementTile 1.0 PlacementTile.qml
+SettingBlock 1.0 SettingBlock.qml
+SettingRow 1.0 SettingRow.qml
+SettingsView 1.0 SettingsView.qml
+SegmentedControl 1.0 SegmentedControl.qml

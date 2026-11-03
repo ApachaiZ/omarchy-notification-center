@@ -41,6 +41,32 @@ test("persisted rows are sanitized when parsed", () => {
   assert.equal(row.stem, "3-2")
 })
 
+test("invalid timestamps are dropped and search text is precomputed", () => {
+  const [valid] = Model.parseEntries(JSON.stringify({
+    id: 1, originalId: 2, timestamp: 3, app: "GitHub", summary: "New PR", body: "Body"
+  }), "live")
+  assert.equal(valid.searchText, "github\nnew pr\nbody")
+  assert.deepEqual(Model.parseEntries(JSON.stringify({ app: "No time" }), "live"), [])
+  assert.deepEqual(Model.parseEntries(JSON.stringify({ timestamp: "nope", app: "Bad" }), "history"), [])
+  assert.equal(Model.timeAgo(0, Date.now()), "")
+  assert.equal(Model.timeAgo("nope", Date.now()), "")
+})
+
+test("null numeric settings fall back instead of becoming zero", () => {
+  const state = Model.parseCenterState(JSON.stringify({ marginX: null, padding: null, cardSpacing: null }))
+  assert.equal(state.marginX, 12)
+  assert.equal(state.padding, 12)
+  assert.equal(state.cardSpacing, 10)
+})
+
+test("live rows win a same-stem merge", () => {
+  const live = [{ stem: "1-2", timestamp: 1, summary: "live" }]
+  const history = [{ stem: "1-2", timestamp: 1, summary: "history" }, { stem: "0-3", timestamp: 0, summary: "old" }]
+  const merged = Model.mergeEntries(live, history)
+  assert.equal(merged.find((row) => row.stem === "1-2").summary, "live")
+  assert.equal(merged.length, 2)
+})
+
 test("engine archive JSON parses like history rows", () => {
   const raw = JSON.stringify({
     version: 1,
@@ -86,6 +112,47 @@ test("engine action and DND policies default on and can be turned off", () => {
   assert.equal(Model.parseCenterState(JSON.stringify({ allowExecActions: false })).allowExecActions, false)
   assert.equal(Model.parseCenterState(JSON.stringify({ dndBypass: false })).dndBypass, false)
   assert.equal(Model.parseCenterState(JSON.stringify({ allowExecActions: true })).allowExecActions, true)
+})
+
+test("empty center state has every default the store reads", () => {
+  for (const raw of ["", "{}", "not json"]) {
+    const state = Model.parseCenterState(raw)
+    assert.equal(state.lastSeen, 0)
+    assert.equal(state.placement, "top-right")
+    assert.equal(state.mode, "window")
+    assert.equal(state.marginX, 12)
+    assert.equal(state.marginY, 12)
+    assert.equal(state.padding, 12)
+    assert.equal(state.cardSpacing, 10)
+    assert.equal(state.confirmClear, true)
+    assert.equal(state.enterOpens, "app")
+    assert.equal(state.shortcutBar, true)
+    assert.equal(state.hideBodies, false)
+    assert.equal(state.showPreviews, true)
+    assert.equal(state.showBadge, true)
+    assert.equal(state.captureToasts, true)
+    assert.equal(state.allowExecActions, true)
+    assert.equal(state.dndBypass, true)
+    assert.equal(state.searchKey, "/")
+    assert.equal(state.dndKey, "d")
+    assert.equal(state.detailKey, "i")
+    assert.equal(state.helpKey, "?")
+    assert.equal(state.settingsKey, "s")
+  }
+})
+
+test("the settings shortcut survives a state round trip", () => {
+  assert.equal(Model.parseCenterState(JSON.stringify({ settingsKey: "P" })).settingsKey, "P")
+  assert.equal(Model.parseCenterState(JSON.stringify({ settingsKey: "s" })).settingsKey, "s")
+  assert.equal(Model.parseCenterState(JSON.stringify({ settingsKey: "other" })).settingsKey, "s")
+})
+
+test("legacy cleanup preserves images referenced by the merged archive", () => {
+  const legacy = "/home/u/.local/state/omarchy/notifications-center"
+  assert.equal(Model.archiveReferencesLegacy('{"entries":[{"image":"file://' + legacy + '/images/1-2"}"]}', legacy), true)
+  assert.equal(Model.archiveReferencesLegacy('{"entries":[]}', legacy), false)
+  assert.equal(Model.archiveReferencesLegacy("", legacy), false)
+  assert.equal(Model.archiveReferencesLegacy("anything", ""), false)
 })
 
 test("legacy cleanup follows the engine enabled state, not its directory", () => {

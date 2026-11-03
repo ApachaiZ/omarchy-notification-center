@@ -3,9 +3,10 @@
 ![Omarchy Notification Center — your notifications, your layout](preview.png)
 
 A notification center for [Omarchy](https://omarchy.org) Quattro. It is a bar
-widget and a keyboard-first history surface: scrollable cards, a detail card
-per notification, search, dismiss one or all, an unread badge, Do Not Disturb,
-and a settings view for layout, spacing, monitors, and shortcuts.
+widget and a keyboard-first inbox: a virtualized card list, a focused detail
+view, search, dismiss one or all, an unread badge, Do Not Disturb, and a
+sectioned settings view with a navigation rail. Cards, the detail view and the
+settings panel share one theme-aware visual language.
 
 The center does **not** own the notification server. It reads the history of
 the stock `omarchy.notifications` service, or of the optional
@@ -13,9 +14,9 @@ the stock `omarchy.notifications` service, or of the optional
 when you install it and want this project to display and manage notifications
 itself.
 
-![Notification list on an empty desktop](screenshots/center-list.jpg)
+![Notification list](screenshots/center-list.jpg)
 
-All captures use synthetic notification content on an empty desktop.
+All captures use synthetic notification content.
 
 ## Features
 
@@ -25,7 +26,7 @@ All captures use synthetic notification content on an empty desktop.
 - **History** — reads the active service's history. With the stock
   `omarchy.notifications` service it shows whatever that service retains; with
   the optional **Notification Engine** it keeps 30 days (up to 1000 entries).
-  **Capture toasts** can be switched Off with the engine to stop new history;
+  **Capture history** can be switched Off with the engine to stop new history;
   live toasts still display and remain actionable.
 - **Search** — `/` (or `Ctrl+F`) and the header icon filter app names, titles,
   and bodies.
@@ -34,24 +35,33 @@ All captures use synthetic notification content on an empty desktop.
 - **Archived images** — with the engine, notification images are copied once
   into the private archive, pruned with the history, and purged when previews
   are disabled. With the stock service, its own image copies are read.
-- **Card list** — app icon, app name, relative time, title, and a body preview.
-  The keyboard cursor is the only card with the theme's accent border.
-- **Detail view** — full summary, full body, and the attached image when the
-  notification carries one. Decoded images are bounded to the card size.
-- **Dismiss one or all** — hover a card for its remove button, right-click a
-  card, or use the header's clear button.
-- **Unread badge** — counts notifications received since the center was last
-  opened.
+- **Card list** — rounded icon plate, app name, relative time, title, and a
+  two-line body preview. Unread rows carry a dot and an accent rail; critical
+  rows keep the urgent rail. The keyboard cursor gets the accent border and a
+  raised fill.
+- **Detail view** — app/urgency header, full summary, full body, the attached
+  image when the notification carries one, and explicit **Open app** /
+  **Dismiss** actions. Decoded images are bounded to the card size.
+- **Dismiss one or all** — click a card to open its detail view; hover it for
+  **Open app** and **Remove** buttons; right-click it to remove. The header's
+  clear button asks for confirmation when that setting is on. With the engine,
+  a single removal addresses the exact notification stem, never a summary
+  substring.
+- **Unread badge** — the bar badge counts notifications received since the
+  center was last opened, and the header shows the same count as a pill. The
+  shared store means every monitor's bell agrees.
 - **Do Not Disturb** — right-click the bell or use the header button; silenced
   notifications still land in the list.
 - **Three layouts** — floating window, horizontal band, or vertical band.
-  Each side margin, the padding, and the gap between cards are configurable.
-- **Open the sender** — `Enter` (default) or clicking a card focuses the
-  application that sent the notification; `i` or the info button opens the
-  detail card. `Enter` can be switched to open details instead.
+  Each side margin, the padding, and the gap between cards are configurable;
+  the layout is chosen with three visual tiles.
+- **Open the sender** — `Enter` (default) opens the sending app; `i` or a card
+  click opens the detail view, which also has an **Open app** button. `Enter`
+  can be switched to open details instead. In the detail view, `o` opens the
+  app.
 - **Help and hints** — `g`/`G` jump to the first/last notification, `?` shows
-  the shortcut help, and a discreet hint bar lists the active commands. The
-  bar can be hidden.
+  the grouped shortcut reference, and the footer uses keycaps for the active
+  commands. The hint bar can be hidden.
 - **Privacy** — hide notification bodies, disable and purge image previews, or
   hide the unread badge. The center and engine drop remote image URLs; with the
   stock service, its own toasts keep the stock service's behavior. Every text
@@ -67,8 +77,8 @@ All captures use synthetic notification content on an empty desktop.
   search, `d` Do Not Disturb, `Shift+C` clear, `g`/`G`, `?`, `Esc`, and
   the Settings key (default `s`). The search, DND, details, settings, and
   help keys are configurable in Settings.
-- **Keyboard-driven settings** — arrows or `hjkl` move between settings,
-  left/right adjust the focused value, `Enter` applies.
+- **Keyboard-driven settings** — Tab switches category, arrows or `hjkl` move
+  between rows, left/right adjusts the focused value, `Enter` applies.
 - **Placement settings** — choose the window position (top/bottom ×
   left/center/right) with a fine edge margin, and move the bar icon between the
   left, center, and right sections with an exact index.
@@ -93,10 +103,6 @@ All captures use synthetic notification content on an empty desktop.
 | Horizontal band | Vertical band |
 | --- | --- |
 | ![Horizontal notification band](screenshots/horizontal.jpg) | ![Vertical notification band](screenshots/vertical.jpg) |
-
-| Settings (window) | Settings (horizontal band) |
-| --- | --- |
-| ![Settings view](screenshots/settings.jpg) | ![Sectioned settings in the horizontal band](screenshots/settings-horizontal.jpg) |
 
 | Shortcut help | |
 | --- | --- |
@@ -123,8 +129,8 @@ shell's clone guard disables `omarchy.notifications` when the engine is
 enabled. The center stays installed, but the stock service stops handling
 notifications.
 
-You can also install it from **Settings → Privacy → Notification engine →
-Install**. To return to the stock service:
+You can also install it from **Settings → Engine → Install**. To return to
+the stock service:
 
 ```bash
 omarchy plugin remove apach.notification-engine
@@ -133,7 +139,7 @@ omarchy plugin enable omarchy.notifications
 
 The center continues to work either way.
 
-**Capture toasts** only applies when the engine is active:
+**Capture history** only applies when the engine is active:
 
 - **On (default)** — received toasts are displayed and kept in the engine's
   30-day history.
@@ -147,51 +153,38 @@ two separate plugins; each needs its own marketplace listing if published.
 
 ## Settings
 
-The gear button in the panel header or the configured Settings key (`s` by
-default; `Shift+P` is selectable) opens the settings view:
+The gear button or the configured Settings key (`s` by default; `Shift+P` is
+selectable) opens the settings view. It is a navigation rail plus one focused
+category pane, so the old long scroll of tiny segmented controls is gone:
 
-- **Layout** — `Window` (floating card), `Horizontal` band, or `Vertical`
-  band.
-- **Margins** — `Horizontal` (left and right together) and `Vertical`
-  (top and bottom together), 0–64 px in 4 px steps. The bar's own thickness is
-  added on its side.
-- **Padding / Card spacing** — one global inner padding (4–32 px, all sides)
-  and the gap between notification cards (2–24 px).
-- **Centered sections** — Layout, Spacing, Position, Bar icons, Privacy,
-  Shortcuts, and Clear keep their title above the content. In window/vertical
-  modes they stack with horizontal dividers; in a horizontal band they run
-  left to right as equal columns separated by vertical rules.
-- **Privacy** — show/hide bodies, show/hide previews (with the engine, hiding
-  purges archived image copies), show/hide the unread badge, and **Capture
-  toasts** On/Off. Capture only applies to the engine; with the stock service
-  it is ignored. The **Notification engine** section offers the optional
-  engine installation with its replacement warning, plus **Actions** and
-  **DND bypass** switches. Both are on by default; app names are chosen by
-  senders, so turning them off is the reliable way to refuse spoofed actions
-  or a spoofed bypass of Do Not Disturb.
-- **Shortcuts** — choose what `Enter` opens (app or details), show/hide the
-  hint bar, and pick the Search (`/` or `Ctrl+F`), DND (`d`/`D`), Details
-  (`i`/`I`), Settings (`s`/`Shift+P`), and Help (`?`/`F1`) keys.
-- **Position** — `Top`/`Bottom` and `Left`/`Center`/`Right` anchor, plus a
-  `Center Screen` button that centers the panel in the middle of the display.
-  A vertical band always hangs from the top: its Bottom row and the
-  `Center Screen` button are disabled, and only the left/center/right anchor
-  applies.
-- **Screens** — choose one or more detected monitors (up to four) that host
-  both the center and its toasts. The list comes from the outputs present at
-  runtime, not from hardcoded names or the focused monitor. Left/right moves
-  the screen cursor, `Enter` toggles it, and the buttons also toggle directly.
-  If a chosen output disappears, both surfaces fall back to the same remaining
-  output.
-- **Bar icon** — `Left`, `Center`, or `Right` section, plus a position stepper
-  for the exact index inside that section. Moves go through
-  `omarchy bar move`, so the bar updates immediately.
-- **Clear confirmation** — `Shift+C` asks for a second press by default; turn
-  the confirmation off to clear on the first press.
-- **History note** — the archive keeps 30 days (up to 1000 entries).
+- **Layout** — three visual layout tiles (`Window`, `Horizontal`, `Vertical`),
+  then sliders for the horizontal and vertical margins (0–64 px in 4 px steps),
+  inner padding (4–32 px), and card spacing (2–24 px). The bar's own thickness
+  is added on its side.
+- **Position** — a miniature screen grid for the six corners/edges, a
+  **Center screen** action, and monitor chips. A vertical band hangs from the
+  top, so its Bottom row and the center action are disabled. Up to four
+  detected outputs can host the center and its toasts.
+- **Notifications** — what `Enter` opens, the hint bar, and privacy switches:
+  hide bodies, image previews, unread badge, and engine history capture.
+- **Shortcuts** — Search (`/` or `Ctrl+F`), DND (`d`/`Shift+D`), Details
+  (`i`/`Shift+I`), Help (`?`/`F1`), and Settings (`s`/`Shift+P`).
+- **Engine** — live engine status and version, one **Install / Enable /
+  Update** action, **Run notification actions**, **Allow DND bypass**, and a
+  short security note. App names are chosen by senders, so these switches are
+  the reliable way to refuse spoofed actions or a spoofed DND bypass.
+- **Bar icon** — `Left`, `Center`, or `Right` section plus an exact position
+  stepper inside that section. Moves go through `omarchy bar move`.
+- **Data** — clear confirmation, saved-notification count and retention, and
+  the destructive **Clear all notifications** action with the same two-step
+  confirmation.
 
-Settings are stored in
-`${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/notifications-center.json`
+Navigation is shared by mouse and keyboard: **Tab / Shift+Tab** changes
+section, **↑↓ / jk** moves rows, **←→ / hl** adjusts the focused value, and
+**Enter** applies it. The selected row and sidebar category stay in sync when
+the mouse enters a control.
+
+Settings are stored in `~/.local/state/omarchy/notifications-center.json`
 alongside the last-seen timestamp.
 
 ## Keyboard
@@ -201,7 +194,8 @@ alongside the last-seen timestamp.
 | `/` or `Ctrl+F` | Search app, title, or body |
 | `↑` / `↓` or `k` / `j` | Move the cursor / scroll |
 | `Enter` or `Space` | Open the sender app (configurable) / go back |
-| `i` | Open the detail card for the selection |
+| `i` | Open the detail view for the selection |
+| `o` (detail) | Open the sender app |
 | `g` / `G` | First / last notification |
 | `Del` or `x` | Remove the selected notification |
 | `d` | Toggle Do Not Disturb |
@@ -209,12 +203,15 @@ alongside the last-seen timestamp.
 | `?` | Show shortcut help |
 | `s` or `Shift+P` (configured) | Open settings |
 | `Esc` | Leave search, detail, or settings, then close |
-| `↑` / `↓` / `j` / `k` (settings) | Move between settings rows |
+| `Tab` / `Shift+Tab` (settings) | Next / previous settings category |
+| `↑` / `↓` / `j` / `k` (settings) | Move between rows in the category |
 | `←` / `→` / `h` / `l` (settings) | Adjust the selected value |
 | `Enter` / `Space` (settings) | Apply the selected action |
 
-Clicking a card focuses the sending application; right-click dismisses it.
-Use the info button on the card (or `Enter` on the keyboard) for its detail.
+Clicking a card opens its detail view. Hover a card for **Open app** and
+**Remove**; right-click removes it directly. The detail view has both actions
+as buttons. A notification that arrives while the cursor is active moves the
+cursor with its identity, so the destructive key never lands on the new row.
 Scrollbars appear in a reserved gutter when the list or band overflows.
 
 ## Install
@@ -248,16 +245,21 @@ hyprctl reload
   service (stock `omarchy.notifications` or the optional engine), and the
   `qs.Ui` component kit.
 - Hyprland (layer-shell panel).
-- No external runtime dependencies or background daemons beyond the selected
-  notification service.
+- No background daemons beyond the selected notification service. `jq` is
+  used only when the center must remove one entry from the engine archive
+  directly while the engine is disabled (Omarchy ships it); clear-all removes
+  the archive file instead and needs only coreutils.
 
 ## Data and permissions
 
 The center reads the active notification service's state: live toasts and
 history under `~/.local/state/omarchy/notifications`, the engine archive at
 `~/.local/state/omarchy/notifications-archive.json`, and DND from
-`notifications.json`. It calls `omarchy-shell notifications …` to dismiss,
-clear, and toggle Do Not Disturb. It never owns the notification bus.
+`notifications.json`. A single shared store (a QML singleton) owns those file
+watches, polls and state writes across every monitor's bar, so the bells stay
+in sync and the work happens once. It calls `omarchy-shell notifications …`
+to dismiss, clear, and toggle Do Not Disturb. It never owns the notification
+bus.
 
 With the engine, the archive is kept under
 `~/.local/state/omarchy/notifications-archive.json` (30 days or 1000 entries)
@@ -268,8 +270,10 @@ center clears the active service's history.
 The pre-3.0 plugin kept a private archive under
 `~/.local/state/omarchy/notifications-center/`. v3 never reads it: on upgrade
 it is removed when the engine is not installed, or merged by the engine when
-it is. **Clear all** deletes it in every case, so no old notification copy
-survives past the active service's retention.
+it is. If a migrated archive still references image copies in that tree, the
+tree is preserved so previews keep working rather than leaving broken images.
+**Clear all** deletes it in every case, so no old notification copy survives
+past the active service's retention.
 
 Notification images are copied only from local files by the engine; remote
 URLs and other URI schemes are dropped, so displaying a notification never
@@ -277,7 +281,7 @@ fetches the network. App names, titles and bodies are capped while parsing
 (256/512/8192 characters), so a malformed or oversized history file cannot
 exhaust memory. Bodies render as StyledText with `<img>` tags stripped
 before Qt parses them. The private archive, history, and image directories are
-created with mode `0700`. With **Capture toasts** off, the engine does not
+created with mode `0700`. With **Capture history** off, the engine does not
 write new notifications to the archive; they stay in memory for their live
 toast only. With the stock service the setting is ignored.
 
