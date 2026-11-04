@@ -66,10 +66,12 @@ All captures use synthetic notification content.
   hide the unread badge. The center and engine drop remote image URLs; with the
   stock service, its own toasts keep the stock service's behavior. Every text
   element is rendered as plain text, except notification bodies, which use
-  styled text only after `<img>` tags have been stripped. The pre-3.0 private
-  archive is removed at startup when no engine is enabled, and an
-  installed-but-disabled engine no longer keeps it alive. An enabled engine at
-  least 1.0.5 migrates the archive and cleans expired images itself; an
+  styled text only after `<img>` tags have been stripped. With no engine, the
+  pre-3.0 private archive is removed unless a retained row still points at one
+  of its image copies; in that case the center prunes every unreferenced copy
+  and removes the whole tree once the last reference disappears, so an
+  installed-but-disabled engine cannot keep old data alive. An enabled engine
+  at least 1.0.5 migrates the archive and cleans expired images itself; an
   enabled older engine is updated once per session, and the legacy tree stays
   untouched until the updated engine takes over, so retained history never
   loses the image copies or the archive it still has to merge.
@@ -268,11 +270,12 @@ center reads the stock service's own history and image copies. Clearing the
 center clears the active service's history.
 
 The pre-3.0 plugin kept a private archive under
-`~/.local/state/omarchy/notifications-center/`. v3 never reads it: on upgrade
-it is removed when the engine is not installed, or merged by the engine when
-it is. If a migrated archive still references image copies in that tree, the
-tree is preserved so previews keep working rather than leaving broken images.
-**Clear all** deletes it in every case, so no old notification copy survives
+`~/.local/state/omarchy/notifications-center/`. v3 never reads it as history.
+With no engine, the center keeps only the image copies still referenced by a
+retained live, archive or stock-history row: every other copy is pruned when
+the retained rows change, and the whole tree is removed once the last
+reference disappears. An enabled engine merges the archive itself. **Clear
+all** deletes the tree in every case, so no old notification copy survives
 past the active service's retention.
 
 Notification images are copied only from local files by the engine; remote

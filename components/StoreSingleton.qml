@@ -119,10 +119,11 @@ Item {
     Qt.callLater(function() { centerStateFile.reload() })
   }
 
-  property bool legacyCleanupStarted: false
   property bool legacyCleanupDelegated: false
-  property bool legacyCleanupSkipped: false
+  property string legacyPruneSignature: ""
   property bool archiveFileLoaded: false
+  property bool liveFileLoaded: false
+  property bool historyFileLoaded: false
   property bool engineEnabled: false
   property string engineVersion: ""
   property bool engineManifestLoaded: false
@@ -134,38 +135,66 @@ Item {
   // after "Clear all". Only an enabled engine whose manifest is at least
   // 1.0.5 can safely own the migration: older engines dropped expired entries
   // without deleting their images, and they preserve image references into
-  // the legacy directory, so deleting the whole tree would break retained
-  // history and an archive they may not have merged yet. Wait for both
-  // shell.json and the engine manifest so the decision is based on
-  // configuration and version.
+  // the legacy directory, so the whole tree must stay untouched until the
+  // engine is updated or disabled. Wait for shell.json, the engine manifest
+  // and the initial live/history reads so a cleanup decision never runs
+  // against a partially loaded set of retained rows.
   function cleanupLegacyArchive() {
-    if (!store.shellConfigLoaded || !store.engineManifestLoaded || !store.archiveFileLoaded) return
-    if (store.legacyCleanupSkipped) return
-    // A migrated archive can still point at image copies inside the legacy
-    // tree. Deleting the tree then leaves broken previews, so keep it until
-    // the archive no longer references it.
-    if (Model.archiveReferencesLegacy(store.lastArchiveRaw, store.legacyDir)) {
-      store.legacyCleanupSkipped = true
+    if (!store.shellConfigLoaded || !store.engineManifestLoaded) return
+    if (store.engineEnabled) {
+      var enginePlan = Model.legacyCleanupPlan([], store.legacyDir, true,
+        store.engineVersionSafe, store.legacyCleanupDelegated)
+      if (enginePlan.action === "wait") {
+        // Older engine: it owns the tree and may not have merged the archive.
+        store.legacyCleanupDelegated = false
+        store.legacyPruneSignature = ""
+        return
+      }
+      if (enginePlan.action === "delegate") {
+        // 1.0.5+ migrates the legacy archive and queues image cleanup for
+        // entries it drops; the center must not touch the tree.
+        store.legacyCleanupDelegated = true
+        store.legacyPruneSignature = ""
+      }
       return
     }
-    var action = Model.legacyCleanupAction(store.engineEnabled,
-      store.engineVersionSafe, store.legacyCleanupStarted, store.legacyCleanupDelegated)
-    if (action === "done") return
-    if (action === "wait") {
-      // Enabled but older (or missing) engine: hold off. maybeUpdateEngine()
-      // upgrades the checkout once per session; this function re-runs on the
-      // next manifest or shell config change and the decision is revisited.
-      store.legacyCleanupDelegated = false
+    store.legacyCleanupDelegated = false
+    if (!store.archiveFileLoaded || !store.liveFileLoaded || !store.historyFileLoaded)
+      return
+    // Debounce destructive sweeps: an atomic archive replace briefly makes
+    // the path unreadable, and pruning the current (empty) row set during
+    // that window would delete images the replacement still references.
+    legacyCleanupTimer.restart()
+  }
+
+  function applyLegacyCleanup() {
+    if (!store.shellConfigLoaded || !store.engineManifestLoaded) return
+    if (store.engineEnabled) return
+    if (!store.archiveFileLoaded || !store.liveFileLoaded || !store.historyFileLoaded)
+      return
+
+    var plan = Model.legacyCleanupPlan(store.entries, store.legacyDir, false, false, false)
+    if (plan.action === "delete") {
+      // The last row that could render a pre-3.0 copy is gone, so the whole
+      // tree can go, exactly as before. This is recomputed after every source
+      // change rather than latching a permanent skip.
+      if (store.legacyPruneSignature === "delete") return
+      store.legacyPruneSignature = "delete"
+      if (!legacyCleanupProc.running) legacyCleanupProc.running = true
       return
     }
-    if (action === "delegate") {
-      // 1.0.5+ migrates the legacy archive and queues image cleanup for the
-      // entries it drops; the center must not touch the tree.
-      store.legacyCleanupDelegated = true
-      return
-    }
-    store.legacyCleanupStarted = true
-    legacyCleanupProc.running = true
+    if (plan.action !== "prune") return
+
+    // Keep the referenced copies, remove every other legacy image. The
+    // signature prevents a second identical sweep on every poll; a changed
+    // keep set (deleted/expired row, new live row, config change) recomputes.
+    var keep = plan.keep.slice().sort()
+    var signature = JSON.stringify(keep)
+    if (signature === store.legacyPruneSignature) return
+    var argv = Model.legacyPruneArgv(store.legacyDir, keep)
+    if (!argv) return
+    store.legacyPruneSignature = signature
+    store.enqueueAction(argv)
   }
 
   function maybeUpdateEngine() {
@@ -185,17 +214,27 @@ Item {
   }
 
   function onLiveRead(raw) {
-    if (raw === store.lastLiveRaw) return
+    store.liveFileLoaded = true
+    if (raw === store.lastLiveRaw) {
+      store.cleanupLegacyArchive()
+      return
+    }
     store.lastLiveRaw = raw
     store.liveEntries = store.filterSuppressed(Model.parseEntries(raw, "live"))
     store.rebuildEntries()
+    store.cleanupLegacyArchive()
   }
 
   function onHistoryRead(raw) {
-    if (raw === store.lastHistoryRaw) return
+    store.historyFileLoaded = true
+    if (raw === store.lastHistoryRaw) {
+      store.cleanupLegacyArchive()
+      return
+    }
     store.lastHistoryRaw = raw
     store.historyEntries = store.filterSuppressed(Model.parseEntries(raw, "history"))
     store.rebuildArchive()
+    store.cleanupLegacyArchive()
   }
 
   function onArchiveLoaded(raw) {
@@ -801,6 +840,7 @@ Item {
     atomicWrites: false
     printErrors: false
     onLoaded: store.parseShellConfig(text())
+    onFileChanged: reload()
   }
 
   // The engine version decides whether it can own the pre-3.0 migration. An
@@ -864,6 +904,13 @@ Item {
     interval: 150
     repeat: false
     onTriggered: store.refresh()
+  }
+
+  Timer {
+    id: legacyCleanupTimer
+    interval: 750
+    repeat: false
+    onTriggered: store.applyLegacyCleanup()
   }
 
   // While the center is open, poll slowly as a fallback; the watches usually

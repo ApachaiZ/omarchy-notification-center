@@ -222,13 +222,79 @@ function hash(s) {
   return h
 }
 
-// Whether the unified archive still points at image copies inside the
-// pre-split legacy tree. The center must not delete that tree while any row
-// still renders one of those files.
-function archiveReferencesLegacy(raw, legacyDir) {
-  var dir = String(legacyDir || "")
-  if (dir === "") return false
-  return String(raw || "").indexOf(dir) !== -1
+// Exact image files inside the pre-split legacy tree that retained live or
+// archived rows still render. Paths are sender-controlled, so only the
+// basename directly under `legacyDir/images/` counts; traversal and remote
+// sources are ignored. Returned names are passed as argv to the prune command
+// and never interpolated into shell code.
+function legacyImageBasenames(entries, legacyDir) {
+  var dir = String(legacyDir || "").replace(/\/+$/, "")
+  var prefix = dir + "/images/"
+  var seen = ({})
+  var out = []
+  if (dir === "" || !Array.isArray(entries)) return out
+  for (var i = 0; i < entries.length; i++) {
+    var entry = entries[i]
+    if (!entry || typeof entry !== "object") continue
+    var values = [entry.image, entry.appIcon]
+    for (var v = 0; v < values.length; v++) {
+      var value = String(values[v] || "")
+      if (value.indexOf("file://") === 0) value = value.slice(7)
+      var decoded = value
+      try {
+        decoded = decodeURIComponent(value)
+      } catch (e) {
+        // A literal percent sign is not an escape; fall through with the
+        // original path rather than dropping a real reference.
+      }
+      if (decoded.indexOf(prefix) !== 0) continue
+      var base = decoded.slice(prefix.length)
+      if (!base || base.indexOf("/") !== -1 || base.indexOf("\u0000") !== -1 ||
+          base === "." || base === "..") continue
+      if (seen[base]) continue
+      seen[base] = true
+      out.push(base)
+    }
+  }
+  return out
+}
+
+// Decide how the center cleans the pre-split tree. An enabled engine owns the
+// migration: delegate to 1.0.5+, wait for older engines (which still point
+// into the tree), and never touch it from the center. With no engine, the
+// decision is recomputed from the rows still retained: prune every unreferenced
+// copy while any reference survives, then remove the whole tree once the last
+// reference disappears. `delegated` only makes the engine hand-off idempotent;
+// it must not latch the disabled-engine cleanup path.
+function legacyCleanupPlan(entries, legacyDir, engineEnabled, engineVersionSafe, delegated) {
+  if (engineEnabled) {
+    if (!engineVersionSafe) return { action: "wait", keep: [] }
+    return { action: delegated ? "done" : "delegate", keep: [] }
+  }
+  var keep = legacyImageBasenames(entries, legacyDir)
+  return { action: keep.length > 0 ? "prune" : "delete", keep: keep }
+}
+
+// Build the argv that removes legacy image files whose basenames are not in
+// `keep`. Names travel as positional arguments so no archive-controlled byte
+// reaches the shell program text.
+function legacyPruneArgv(legacyDir, keep) {
+  var dir = String(legacyDir || "").replace(/\/+$/, "")
+  if (dir === "" || !Array.isArray(keep) || keep.length === 0) return null
+  var argv = ["bash", "-c",
+    'dir="$1"; shift\n' +
+    'for file in "$dir"/*; do\n' +
+    '  [ -f "$file" ] || continue\n' +
+    '  base="${file##*/}"\n' +
+    '  keep=0\n' +
+    '  for name in "$@"; do\n' +
+    '    if [[ "$base" == "$name" ]]; then keep=1; break; fi\n' +
+    '  done\n' +
+    '  (( keep )) || rm -f -- "$file"\n' +
+    'done',
+    "--", dir + "/images"]
+  for (var i = 0; i < keep.length; i++) argv.push(String(keep[i]))
+  return argv
 }
 
 // ---- settings ------------------------------------------------------------
@@ -369,20 +435,6 @@ function manifestVersion(raw) {
   }
 }
 
-// Decide what the center may do with the pre-3.0 legacy tree. "delete" wipes
-// the whole directory (safe when no engine can reference it); "delegate"
-// leaves it to an enabled engine 1.0.5+ that migrates it and cleans expired
-// images itself; "wait" holds off because an enabled-but-older engine still
-// references image copies in that directory and may not have merged the
-// archive yet. cleanupRan/delegated make the same state idempotent while
-// allowing a transition (old engine -> updated, or enabled -> disabled) to
-// change the decision.
-function legacyCleanupAction(engineEnabled, engineVersionSafe, cleanupRan, delegated) {
-  if (!engineEnabled) return cleanupRan ? "done" : "delete"
-  if (engineVersionSafe) return delegated ? "done" : "delegate"
-  return "wait"
-}
-
 function versionAtLeast(value, minimum) {
   function parts(text) {
     var out = []
@@ -425,8 +477,9 @@ if (typeof module !== "undefined") {
     safeAppIcon: safeAppIcon,
     imageStem: imageStem,
     engineEnabledFromShellConfig: engineEnabledFromShellConfig,
-    archiveReferencesLegacy: archiveReferencesLegacy,
-    legacyCleanupAction: legacyCleanupAction,
+    legacyImageBasenames: legacyImageBasenames,
+    legacyCleanupPlan: legacyCleanupPlan,
+    legacyPruneArgv: legacyPruneArgv,
     manifestVersion: manifestVersion,
     versionAtLeast: versionAtLeast,
     styledSanitizedBody: styledSanitizedBody,
