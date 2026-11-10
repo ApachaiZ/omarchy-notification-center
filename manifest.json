@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "apach.notifications",
   "name": "Notification Center",
-  "version": "3.1.1",
+  "version": "3.2.0",
   "author": "ApachaiZ",
   "license": "GPL-3.0",
   "description": "Notification center for Omarchy: history, search, detail, DND, and an optional notification engine. Works with omarchy.notifications or the engine.",

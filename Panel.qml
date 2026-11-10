@@ -20,6 +20,8 @@ import "components"
 Panel {
   id: root
   moduleName: "apach.notifications"
+
+  Commons.Translations { id: strings; directory: Qt.resolvedUrl("i18n") }
   ipcTarget: "apach.notifications"
   manageIpc: false
 
@@ -105,51 +107,51 @@ Panel {
   readonly property var settingsCategories: [
     {
       id: "layout",
-      label: "Layout",
+      label: strings.t("settings.category.layout.label"),
       glyph: "󰕮",
-      description: "Presentation, size and spacing",
+      description: strings.t("settings.category.layout.description"),
       rows: [0, 1, 2, 3, 4]
     },
     {
       id: "position",
-      label: "Position",
+      label: strings.t("settings.category.position.label"),
       glyph: "󰍹",
-      description: "Where the center appears on screen",
+      description: strings.t("settings.category.position.description"),
       rows: [5, 6, 7]
     },
     {
       id: "notifications",
-      label: "Notifications",
+      label: strings.t("settings.category.notifications.label"),
       glyph: "󰂚",
-      description: "Content, privacy and behavior",
+      description: strings.t("settings.category.notifications.description"),
       rows: [8, 9, 10, 11, 12, 13]
     },
     {
       id: "shortcuts",
-      label: "Shortcuts",
+      label: strings.t("settings.category.shortcuts.label"),
       glyph: "󰌌",
-      description: "Keys that drive the center",
+      description: strings.t("settings.category.shortcuts.description"),
       rows: [14, 15, 16, 17, 18]
     },
     {
       id: "engine",
-      label: "Engine",
+      label: strings.t("settings.category.engine.label"),
       glyph: "󰒓",
-      description: "Service policies and installation",
+      description: strings.t("settings.category.engine.description"),
       rows: [19, 20, 21]
     },
     {
       id: "bar",
-      label: "Bar icon",
+      label: strings.t("settings.category.bar.label"),
       glyph: "󰅌",
-      description: "Position of the bell in the bar",
+      description: strings.t("settings.category.bar.description"),
       rows: [22, 23]
     },
     {
       id: "data",
-      label: "Data",
+      label: strings.t("settings.category.data.label"),
       glyph: "󰆴",
-      description: "Confirmation and history cleanup",
+      description: strings.t("settings.category.data.description"),
       rows: [24, 25]
     }
   ]
@@ -189,105 +191,114 @@ Panel {
   }
 
   function headerTitle() {
-    if (root.settingsOpen) return "Settings"
-    if (root.helpOpen) return "Shortcuts"
-    if (root.selectedEntry !== null) return "Notification"
-    if (root.searchOpen) return "Search"
-    return "Notifications"
+    if (root.settingsOpen) return strings.t("panel.title.settings")
+    if (root.helpOpen) return strings.t("panel.title.shortcuts")
+    if (root.selectedEntry !== null) return strings.t("panel.title.notification")
+    if (root.searchOpen) return strings.t("panel.title.search")
+    return strings.t("panel.title.notifications")
   }
 
   function headerSubtitle() {
     if (root.settingsOpen) {
       var label = root.currentCategory && root.currentCategory.label
-        ? root.currentCategory.label : "Settings"
-      return label + " · Tab switches section"
+        ? root.currentCategory.label : strings.t("panel.title.settings")
+      return strings.t("panel.subtitle.settingsSection").arg(label)
     }
-    if (root.helpOpen) return "Keyboard reference"
+    if (root.helpOpen) return strings.t("panel.subtitle.keyboardReference")
     if (root.searchOpen) {
-      if (root.query === "") return "Type to search app, title or body"
+      if (root.query === "") return strings.t("panel.subtitle.searchPrompt")
       var results = root.matchedEntries.length
-      return results + " result" + (results === 1 ? "" : "s") + " for \"" + root.query + "\""
+      return strings.tn("panel.subtitle.searchResults", results)
+        .arg(Commons.I18n.formatNumber(results))
+        .arg(root.query)
     }
     if (root.selectedEntry !== null) {
       var app = String(root.selectedEntry.app || "")
-      return (app !== "" ? app + " · " : "") + root.detailTime(root.selectedEntry)
+      var when = root.detailTime(root.selectedEntry)
+      return app !== "" ? strings.t("panel.subtitle.detailMeta").arg(app).arg(when) : when
     }
     var parts = []
-    if (root.dnd) parts.push("Do Not Disturb")
-    if (root.unseenCount > 0) parts.push(root.unseenCount + " unread")
-    if (root.entries.length > 0) parts.push(root.entries.length + " saved")
-    return parts.length > 0 ? parts.join(" · ") : "All caught up"
+    if (root.dnd) parts.push(strings.t("panel.subtitle.dnd"))
+    if (root.unseenCount > 0) {
+      parts.push(strings.tn("panel.subtitle.unread", root.unseenCount)
+        .arg(Commons.I18n.formatNumber(root.unseenCount)))
+    }
+    if (root.entries.length > 0) {
+      parts.push(strings.tn("panel.subtitle.saved", root.entries.length)
+        .arg(Commons.I18n.formatNumber(root.entries.length)))
+    }
+    return parts.length > 0 ? parts.join(" · ") : strings.t("panel.subtitle.caughtUp")
   }
 
   function hintItems() {
     if (root.settingsOpen) {
       return [
-        { key: "Tab", label: "Section" },
-        { key: "↑↓", label: "Row" },
-        { key: "←→", label: "Adjust" },
-        { key: "Enter", label: "Apply" },
-        { key: "Esc", label: "Back" }
+        { key: "Tab", label: strings.t("hint.section") },
+        { key: "↑↓", label: strings.t("hint.row") },
+        { key: "←→", label: strings.t("hint.adjust") },
+        { key: "Enter", label: strings.t("hint.apply") },
+        { key: "Esc", label: strings.t("hint.back") }
       ]
     }
     if (root.helpOpen) {
       return [
-        { key: "Esc", label: "Close" },
-        { key: root.keyLabel(root.store ? root.store.helpKey : "?"), label: "Toggle help" }
+        { key: "Esc", label: strings.t("hint.close") },
+        { key: root.keyLabel(root.store ? root.store.helpKey : "?"), label: strings.t("hint.toggleHelp") }
       ]
     }
     if (root.searchOpen) {
       return [
-        { key: "↑↓", label: "Results" },
-        { key: "Enter", label: "Open" },
-        { key: "Esc", label: "Cancel" }
+        { key: "↑↓", label: strings.t("hint.results") },
+        { key: "Enter", label: strings.t("hint.open") },
+        { key: "Esc", label: strings.t("hint.cancel") }
       ]
     }
     if (root.selectedEntry !== null) {
       return [
-        { key: "Esc", label: "Back" },
-        { key: "o", label: "Open app" },
-        { key: "x", label: "Dismiss" }
+        { key: "Esc", label: strings.t("hint.back") },
+        { key: "o", label: strings.t("hint.openApp") },
+        { key: "x", label: strings.t("hint.dismiss") }
       ]
     }
     // Arrows and Enter are taught by the help view; the main list footer
     // keeps only the actions whose shortcuts are not obvious.
     return [
-      { key: root.keyLabel(root.store ? root.store.detailKey : "i"), label: "Details" },
-      { key: root.keyLabel(root.store ? root.store.searchKey : "/"), label: "Search" },
-      { key: root.keyLabel(root.store ? root.store.dndKey : "d"), label: "DND" },
-      { key: root.keyLabel(root.store ? root.store.settingsKey : "s"), label: "Settings" },
-      { key: root.keyLabel(root.store ? root.store.helpKey : "?"), label: "Help" }
+      { key: root.keyLabel(root.store ? root.store.detailKey : "i"), label: strings.t("hint.details") },
+      { key: root.keyLabel(root.store ? root.store.searchKey : "/"), label: strings.t("hint.search") },
+      { key: root.keyLabel(root.store ? root.store.dndKey : "d"), label: strings.t("hint.dnd") },
+      { key: root.keyLabel(root.store ? root.store.settingsKey : "s"), label: strings.t("hint.settings") },
+      { key: root.keyLabel(root.store ? root.store.helpKey : "?"), label: strings.t("hint.help") }
     ]
   }
 
   readonly property var helpGroups: {
     var enter = root.store && root.store.enterOpens === "detail"
-      ? "Open the detail view" : "Focus the sending app"
+      ? strings.t("help.openDetail") : strings.t("help.focusApp")
     return [
       {
-        title: "Navigate",
+        title: strings.t("help.groupNavigate"),
         items: [
-          { key: "↑↓ / jk", label: "Move the cursor" },
-          { key: "g / G", label: "First / last notification" },
-          { key: "Esc", label: "Back, then close the center" }
+          { key: "↑↓ / jk", label: strings.t("help.moveCursor") },
+          { key: "g / G", label: strings.t("help.firstLast") },
+          { key: "Esc", label: strings.t("help.backThenClose") }
         ]
       },
       {
-        title: "Actions",
+        title: strings.t("help.groupActions"),
         items: [
           { key: "Enter", label: enter },
-          { key: root.keyLabel(root.store ? root.store.detailKey : "i"), label: "Open the detail view" },
-          { key: "x", label: "Dismiss the selected notification" },
-          { key: "Shift+C", label: "Clear all notifications" }
+          { key: root.keyLabel(root.store ? root.store.detailKey : "i"), label: strings.t("help.openDetail") },
+          { key: "x", label: strings.t("help.dismissSelected") },
+          { key: "Shift+C", label: strings.t("help.clearAll") }
         ]
       },
       {
-        title: "Views",
+        title: strings.t("help.groupViews"),
         items: [
-          { key: root.keyLabel(root.store ? root.store.searchKey : "/"), label: "Search app, title and body" },
-          { key: root.keyLabel(root.store ? root.store.settingsKey : "s"), label: "Open settings" },
-          { key: root.keyLabel(root.store ? root.store.dndKey : "d"), label: "Toggle Do Not Disturb" },
-          { key: root.keyLabel(root.store ? root.store.helpKey : "?"), label: "Show or hide this reference" }
+          { key: root.keyLabel(root.store ? root.store.searchKey : "/"), label: strings.t("help.search") },
+          { key: root.keyLabel(root.store ? root.store.settingsKey : "s"), label: strings.t("help.openSettings") },
+          { key: root.keyLabel(root.store ? root.store.dndKey : "d"), label: strings.t("help.toggleDnd") },
+          { key: root.keyLabel(root.store ? root.store.helpKey : "?"), label: strings.t("help.toggleReference") }
         ]
       }
     ]
@@ -365,7 +376,21 @@ Panel {
   function detailTime(entry) {
     if (!entry || !entry.timestamp) return ""
     var date = new Date(Number(entry.timestamp))
-    return Qt.formatDateTime(date, "ddd d MMM yyyy · HH:mm")
+    return root.displayLocale.toString(date, "ddd d MMM yyyy · HH:mm")
+  }
+
+  // Localized relative age for list rows. The catalog picks the plural form
+  // and Commons.I18n formats the count in the display language; dates older
+  // than a week use the display locale instead of the English month names.
+  function timeAgo(ts) {
+    var parts = Model.timeAgoParts(ts, Date.now())
+    if (!parts) return ""
+    if (parts.key === "time.justNow") return strings.t(parts.key)
+    if (parts.key !== "") {
+      return strings.tn(parts.key, parts.count)
+        .arg(Commons.I18n.formatNumber(parts.count))
+    }
+    return root.displayLocale.toString(new Date(parts.date), "d MMM")
   }
 
   function dayLabel(ts) {
@@ -374,13 +399,14 @@ Panel {
     var today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
     var day = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
     var diff = Math.round((today - day) / 86400000)
-    if (diff === 0) return "Today"
-    if (diff === 1) return "Yesterday"
-    if (diff > 1 && diff < 7) return Qt.formatDate(date, "dddd")
-    return Qt.formatDate(date, "d MMMM yyyy")
+    if (diff === 0) return strings.t("time.today")
+    if (diff === 1) return strings.t("time.yesterday")
+    if (diff > 1 && diff < 7) return root.displayLocale.toString(date, "dddd")
+    return root.displayLocale.toString(date, "d MMMM yyyy")
   }
 
   readonly property color fg: bar ? bar.foreground : Commons.Color.foreground
+  readonly property var displayLocale: Qt.locale(Commons.I18n.formatLocale)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   // Null-safe view for the detail bindings.
@@ -1187,7 +1213,7 @@ Panel {
                 visible: root.settingsOpen || root.helpOpen || root.selectedEntry !== null || root.searchOpen
                 size: Style.space(28)
                 iconText: "󰅁"
-                tooltipText: "Back (Esc)"
+                tooltipText: strings.t("panel.back")
                 foreground: root.fg
                 hoverColor: Commons.Color.accent
                 fontFamily: root.fontFamily
@@ -1227,7 +1253,7 @@ Panel {
                       id: unreadPillText
                       anchors.centerIn: parent
                       textFormat: Text.PlainText
-                      text: root.unseenCount > 99 ? "99+" : String(root.unseenCount)
+                      text: root.unseenCount > 99 ? "99+" : Commons.I18n.formatNumber(root.unseenCount)
                       color: Commons.Color.accent
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.caption
@@ -1256,7 +1282,8 @@ Panel {
                     && root.selectedEntry === null && !root.searchOpen
                   size: Style.space(28)
                   iconText: "󰍉"
-                  tooltipText: "Search (" + root.keyLabel(root.store ? root.store.searchKey : "/") + ")"
+                  tooltipText: strings.t("panel.searchTooltip")
+                    .arg(root.keyLabel(root.store ? root.store.searchKey : "/"))
                   foreground: root.fg
                   hoverColor: Commons.Color.accent
                   fontFamily: root.fontFamily
@@ -1267,7 +1294,9 @@ Panel {
                   visible: !root.settingsOpen && !root.helpOpen
                   size: Style.space(28)
                   iconText: root.dnd ? "󰂜" : "󰂛"
-                  tooltipText: root.dnd ? "Allow notifications" : "Silence notifications"
+                  tooltipText: root.dnd
+                    ? strings.t("panel.allowNotifications")
+                    : strings.t("panel.silenceNotifications")
                   foreground: root.dnd ? Commons.Color.accent : Qt.darker(root.fg, 1.5)
                   hoverColor: Commons.Color.accent
                   fontFamily: root.fontFamily
@@ -1278,7 +1307,8 @@ Panel {
                   visible: !root.settingsOpen && !root.helpOpen
                   size: Style.space(28)
                   iconText: "󰒓"
-                  tooltipText: "Settings (" + root.keyLabel(root.store ? root.store.settingsKey : "s") + ")"
+                  tooltipText: strings.t("panel.settingsTooltip")
+                    .arg(root.keyLabel(root.store ? root.store.settingsKey : "s"))
                   foreground: root.fg
                   hoverColor: Commons.Color.accent
                   fontFamily: root.fontFamily
@@ -1290,7 +1320,7 @@ Panel {
                     && root.selectedEntry === null
                   size: Style.space(28)
                   iconText: "󰆴"
-                  tooltipText: "Clear all"
+                  tooltipText: strings.t("panel.clearAll")
                   foreground: root.fg
                   hoverColor: Commons.Color.urgent
                   fontFamily: root.fontFamily
@@ -1317,7 +1347,7 @@ Panel {
                 anchors.fill: parent
                 leftPadding: Style.space(30)
                 rightPadding: Style.space(30)
-                placeholderText: "Search app, title or body"
+                placeholderText: strings.t("search.placeholder")
                 foreground: root.fg
                 accent: Commons.Color.accent
                 font.pixelSize: Style.font.bodySmall
@@ -1357,7 +1387,7 @@ Panel {
                 anchors.verticalCenter: parent.verticalCenter
                 size: Style.space(24)
                 iconText: "󰅖"
-                tooltipText: "Clear search"
+                tooltipText: strings.t("search.clear")
                 foreground: root.fg
                 hoverColor: Commons.Color.urgent
                 fontFamily: root.fontFamily
@@ -1395,14 +1425,14 @@ Panel {
                 Text {
                   Layout.fillWidth: true
                   textFormat: Text.PlainText
-                  text: "Clear every notification?"
+                  text: strings.t("clear.banner")
                   color: root.fg
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.bodySmall
                 }
 
                 Button {
-                  text: "Clear now"
+                  text: strings.t("clear.now")
                   bordered: true
                   foreground: Commons.Color.urgent
                   accent: Commons.Color.urgent
@@ -1460,7 +1490,8 @@ Panel {
                 Text {
                   anchors.horizontalCenter: parent.horizontalCenter
                   textFormat: Text.PlainText
-                  text: root.query !== "" && root.entries.length > 0 ? "No matches" : "All caught up"
+                  text: root.query !== "" && root.entries.length > 0
+                    ? strings.t("empty.noMatches") : strings.t("empty.caughtUp")
                   color: root.fg
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
@@ -1473,8 +1504,8 @@ Panel {
                   horizontalAlignment: Text.AlignHCenter
                   textFormat: Text.PlainText
                   text: root.query !== "" && root.entries.length > 0
-                    ? "Try a different app, title or phrase."
-                    : "New notifications will appear here as they arrive."
+                    ? strings.t("empty.tryDifferent")
+                    : strings.t("empty.arrive")
                   color: Qt.darker(root.fg, 1.6)
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
@@ -1484,7 +1515,7 @@ Panel {
                 Button {
                   visible: root.query !== ""
                   anchors.horizontalCenter: parent.horizontalCenter
-                  text: "Clear search"
+                  text: strings.t("empty.clearSearch")
                   bordered: true
                   foreground: root.fg
                   accent: Commons.Color.accent
@@ -1545,7 +1576,7 @@ Panel {
 
                     Text {
                       textFormat: Text.PlainText
-                      text: String(root.dayCounts[parent.parent.section] || 0)
+                      text: Commons.I18n.formatNumber(root.dayCounts[parent.parent.section] || 0)
                       color: Qt.darker(root.fg, 1.75)
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.caption
@@ -1563,7 +1594,7 @@ Panel {
                   showBody: !root.store || !root.store.hideBodies
                   iconSource: root.entryIcon(modelData.entry)
                   bodyMarkup: root.bodyText(modelData.entry)
-                  timeText: Model.timeAgo(modelData.entry.timestamp, Date.now())
+                  timeText: root.timeAgo(modelData.entry.timestamp)
                   cardText: Commons.Color.notifications.text
                   accent: Commons.Color.accent
                   urgent: Commons.Color.urgent
@@ -1610,7 +1641,7 @@ Panel {
                     preferredWidth: root.compactWidth
                     iconSource: root.entryIcon(modelData.entry)
                     bodyMarkup: root.bodyText(modelData.entry)
-                    timeText: Model.timeAgo(modelData.entry.timestamp, Date.now())
+                    timeText: root.timeAgo(modelData.entry.timestamp)
                     cardText: Commons.Color.notifications.text
                     accent: Commons.Color.accent
                     urgent: Commons.Color.urgent
@@ -1672,7 +1703,8 @@ Panel {
               bodyMarkup: root.bodyText(root.entry)
               bodyHidden: !!root.store && root.store.hideBodies
               imageSource: root.previewImage(root.entry)
-              timeText: root.detailTime(root.entry) + (root.entry.timestamp ? " · " + Model.timeAgo(root.entry.timestamp, Date.now()) : "")
+              timeText: root.detailTime(root.entry)
+                + (root.entry.timestamp ? " · " + root.timeAgo(root.entry.timestamp) : "")
               foreground: root.fg
               accent: Commons.Color.accent
               urgent: Commons.Color.urgent

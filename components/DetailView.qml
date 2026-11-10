@@ -9,6 +9,8 @@ import qs.Ui
 Column {
   id: root
 
+  Commons.Translations { id: strings; directory: Qt.resolvedUrl("../i18n") }
+
   property var entry: null
   property string iconSource: ""
   property string bodyMarkup: ""
@@ -65,7 +67,7 @@ Column {
           textFormat: Text.PlainText
           text: root.entry && root.entry.app.length > 0
             ? (root.entry.app === "omarchy-action" ? "Omarchy" : root.entry.app)
-            : "Notification"
+            : strings.t("notification.appFallback")
           color: root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.body
@@ -85,7 +87,7 @@ Column {
             id: urgencyLabel
             anchors.centerIn: parent
             textFormat: Text.PlainText
-            text: "Critical"
+            text: strings.t("detail.urgencyCritical")
             color: root.urgent
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
@@ -105,7 +107,7 @@ Column {
             id: lowLabel
             anchors.centerIn: parent
             textFormat: Text.PlainText
-            text: "Low"
+            text: strings.t("detail.urgencyLow")
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
@@ -170,7 +172,7 @@ Column {
         Layout.fillWidth: true
         textFormat: Text.PlainText
         visible: root.bodyHidden && root.entry && root.entry.body.length > 0
-        text: "Body hidden by the privacy settings."
+        text: strings.t("detail.bodyHidden")
         color: root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.bodySmall
@@ -207,7 +209,7 @@ Column {
     Button {
       Layout.fillWidth: true
       Layout.preferredWidth: 1
-      text: "Open app"
+      text: strings.t("detail.openApp")
       iconText: "󰌌"
       bordered: true
       selected: true
@@ -222,7 +224,7 @@ Column {
     Button {
       Layout.fillWidth: true
       Layout.preferredWidth: 1
-      text: "Dismiss"
+      text: strings.t("detail.dismiss")
       iconText: "󰆴"
       bordered: true
       fontFamily: root.fontFamily

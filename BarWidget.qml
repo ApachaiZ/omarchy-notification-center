@@ -13,6 +13,8 @@ BarWidget {
   id: root
   moduleName: "apach.notifications"
 
+  Commons.Translations { id: strings; directory: Qt.resolvedUrl("i18n") }
+
   // Data lives in the shared StoreSingleton (always loaded, cheap); the panel UI in
   // Panel.qml is instantiated on first use so an unanswered center costs no
   // QML widget tree per screen.
@@ -30,10 +32,10 @@ BarWidget {
   readonly property string bellGlyph: root.dnd ? "󰂜" : "󰂞"
 
   readonly property string tooltipText: root.dnd
-    ? "Notifications — silenced"
+    ? strings.t("bar.silenced")
     : (root.unseen > 0
-      ? root.unseen + " unread notification" + (root.unseen > 1 ? "s" : "")
-      : "Notifications")
+      ? strings.tn("bar.unread", root.unseen).arg(Commons.I18n.formatNumber(root.unseen))
+      : strings.t("bar.notifications"))
 
   // Forwarded so this widget can stand in for the panel as the bar's popout
   // identity, same contract as omarchy.clock / omarchy.weather.
@@ -178,7 +180,7 @@ BarWidget {
       id: badgeText
       anchors.centerIn: parent
       textFormat: Text.PlainText
-      text: root.unseen > 9 ? "9+" : String(root.unseen)
+      text: root.unseen > 9 ? "9+" : Commons.I18n.formatNumber(root.unseen)
       color: "#ffffff"
       font.family: root.bar ? root.bar.fontFamily : Style.font.family
       font.pixelSize: Style.font.caption

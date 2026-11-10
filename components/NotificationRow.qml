@@ -10,6 +10,8 @@ import qs.Ui
 BorderSurface {
   id: root
 
+  Commons.Translations { id: strings; directory: Qt.resolvedUrl("../i18n") }
+
   property var entry: null
   property int rowIndex: -1
   property bool cursorActive: false
@@ -129,7 +131,7 @@ BorderSurface {
           textFormat: Text.PlainText
           text: root.entry && root.entry.app.length > 0
             ? (root.entry.app === "omarchy-action" ? "Omarchy" : root.entry.app)
-            : "Notification"
+            : strings.t("notification.appFallback")
           color: root.unread ? root.cardText : root.dimColor
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -168,7 +170,7 @@ BorderSurface {
             PanelActionButton {
               size: Style.space(22)
               iconText: "󰌌"
-              tooltipText: "Open app"
+              tooltipText: strings.t("row.openApp")
               foreground: root.cardText
               hoverColor: root.accent
               fontFamily: root.fontFamily
@@ -178,7 +180,7 @@ BorderSurface {
             PanelActionButton {
               size: Style.space(22)
               iconText: "󰆴"
-              tooltipText: "Remove"
+              tooltipText: strings.t("row.remove")
               foreground: root.cardText
               hoverColor: root.urgent
               fontFamily: root.fontFamily

@@ -10,6 +10,8 @@ import qs.Ui
 Item {
   id: view
 
+  Commons.Translations { id: strings; directory: Qt.resolvedUrl("../i18n") }
+
   property var panel: null
 
   readonly property var store: panel ? panel.store : null
@@ -38,22 +40,30 @@ Item {
 
   function engineStatusText() {
     if (!store) return ""
-    if (engineActive) return engineInstalled ? "Active · v" + store.engineVersion : "Active"
-    if (engineInstalled) return "Installed, disabled"
-    return "Not installed"
+    if (engineActive) {
+      return engineInstalled
+        ? strings.t("settings.engine.activeVersion").arg(store.engineVersion)
+        : strings.t("settings.engine.active")
+    }
+    if (engineInstalled) return strings.t("settings.engine.disabled")
+    return strings.t("settings.engine.notInstalled")
   }
 
   function engineButtonText() {
-    if (!store) return "Install"
-    if (store.engineInstallArmed) return "Confirm"
-    if (engineActive) return "Update"
-    return engineInstalled ? "Enable" : "Install"
+    if (!store) return strings.t("settings.engine.install")
+    if (store.engineInstallArmed) return strings.t("settings.engine.confirm")
+    if (engineActive) return strings.t("settings.engine.update")
+    return engineInstalled
+      ? strings.t("settings.engine.enable")
+      : strings.t("settings.engine.install")
   }
 
   function barPositionText() {
     if (!store || store.barSection === "") return "—"
     var size = Number(store.barSizes[store.barSection] || 0)
-    return (store.barIndex + 1) + " / " + Math.max(1, size)
+    return strings.t("settings.bar.position")
+      .arg(Commons.I18n.formatNumber(store.barIndex + 1))
+      .arg(Commons.I18n.formatNumber(Math.max(1, size)))
   }
 
   RowLayout {
@@ -164,7 +174,9 @@ Item {
             Text {
               Layout.fillWidth: true
               textFormat: Text.PlainText
-              text: view.engineInstalled ? "Notification engine" : "Stock service"
+              text: view.engineInstalled
+                ? strings.t("settings.engine.title")
+                : strings.t("settings.engine.stockService")
               color: view.fg
               font.family: view.fontFamily
               font.pixelSize: Style.font.caption
@@ -233,8 +245,8 @@ Item {
 
         SettingBlock {
           width: parent.width
-          label: "Layout mode"
-          description: "Float a card, or span the screen as a band."
+          label: strings.t("settings.layout.mode")
+          description: strings.t("settings.layout.modeDescription")
           active: view.active(view.idx.mode)
           foreground: view.fg
           accent: view.accent
@@ -247,8 +259,8 @@ Item {
 
             ModeTile {
               Layout.fillWidth: true
-              title: "Window"
-              description: "Floating card"
+              title: strings.t("settings.layout.window")
+              description: strings.t("settings.layout.windowDescription")
               glyph: "󰖯"
               selected: view.store && view.store.mode === "window"
               hasCursor: view.active(view.idx.mode) && selected
@@ -260,8 +272,8 @@ Item {
 
             ModeTile {
               Layout.fillWidth: true
-              title: "Horizontal"
-              description: "Side-by-side band"
+              title: strings.t("settings.layout.horizontal")
+              description: strings.t("settings.layout.horizontalDescription")
               glyph: "󰍹"
               selected: view.store && view.store.mode === "horizontal"
               hasCursor: view.active(view.idx.mode) && selected
@@ -273,8 +285,8 @@ Item {
 
             ModeTile {
               Layout.fillWidth: true
-              title: "Vertical"
-              description: "Stacked side band"
+              title: strings.t("settings.layout.vertical")
+              description: strings.t("settings.layout.verticalDescription")
               glyph: "󰤼"
               selected: view.store && view.store.mode === "vertical"
               hasCursor: view.active(view.idx.mode) && selected
@@ -289,8 +301,8 @@ Item {
         SliderSetting {
           width: parent.width
           rowIndex: view.idx.marginX
-          label: "Horizontal margin"
-          description: "Space between the card and the screen edges."
+          label: strings.t("settings.layout.marginX")
+          description: strings.t("settings.layout.marginXDescription")
           sliderValue: view.store ? view.store.marginX : 12
           sliderMin: 0
           sliderMax: 64
@@ -301,8 +313,8 @@ Item {
         SliderSetting {
           width: parent.width
           rowIndex: view.idx.marginY
-          label: "Vertical margin"
-          description: "Space above and below the card."
+          label: strings.t("settings.layout.marginY")
+          description: strings.t("settings.layout.marginYDescription")
           sliderValue: view.store ? view.store.marginY : 12
           sliderMin: 0
           sliderMax: 64
@@ -313,8 +325,8 @@ Item {
         SliderSetting {
           width: parent.width
           rowIndex: view.idx.padding
-          label: "Card padding"
-          description: "Inner breathing room around the content."
+          label: strings.t("settings.layout.padding")
+          description: strings.t("settings.layout.paddingDescription")
           sliderValue: view.store ? view.store.padding : 12
           sliderMin: 4
           sliderMax: 32
@@ -325,8 +337,8 @@ Item {
         SliderSetting {
           width: parent.width
           rowIndex: view.idx.cardSpacing
-          label: "Card spacing"
-          description: "Gap between notifications."
+          label: strings.t("settings.layout.spacing")
+          description: strings.t("settings.layout.spacingDescription")
           sliderValue: view.store ? view.store.cardSpacing : 10
           sliderMin: 2
           sliderMax: 24
@@ -343,8 +355,8 @@ Item {
 
         SettingBlock {
           width: parent.width
-          label: "Placement"
-          description: "Pick a corner, an edge, or the centre of the screen."
+          label: strings.t("settings.position.placement")
+          description: strings.t("settings.position.placementDescription")
           active: view.active(view.idx.placement)
           foreground: view.fg
           accent: view.accent
@@ -359,7 +371,7 @@ Item {
 
             Text {
               textFormat: Text.PlainText
-              text: "Top"
+              text: strings.t("settings.position.top")
               color: view.dim
               font.family: view.fontFamily
               font.pixelSize: Style.font.caption
@@ -398,7 +410,7 @@ Item {
 
             Text {
               textFormat: Text.PlainText
-              text: "Bottom"
+              text: strings.t("settings.position.bottom")
               color: view.dim
               opacity: view.store && view.store.mode === "vertical" ? 0.35 : 1
               font.family: view.fontFamily
@@ -443,8 +455,8 @@ Item {
 
         SettingBlock {
           width: parent.width
-          label: "Center screen"
-          description: "Ignore the corners and float in the middle."
+          label: strings.t("settings.position.centerScreen")
+          description: strings.t("settings.position.centerScreenDescription")
           active: view.active(view.idx.centerScreen)
           foreground: view.fg
           accent: view.accent
@@ -453,7 +465,7 @@ Item {
 
           Button {
             width: parent.width
-            text: "Center the card"
+            text: strings.t("settings.position.centerCard")
             iconText: "󰍹"
             bordered: true
             selected: view.store && view.store.placement === "center-center"
@@ -471,8 +483,8 @@ Item {
 
         SettingBlock {
           width: parent.width
-          label: "Monitors"
-          description: "Show the center on up to four outputs. Toasts follow the same screens."
+          label: strings.t("settings.position.monitors")
+          description: strings.t("settings.position.monitorsDescription")
           active: view.active(view.idx.screens)
           foreground: view.fg
           accent: view.accent
@@ -526,7 +538,7 @@ Item {
         Text {
           width: parent.width
           textFormat: Text.PlainText
-          text: "BEHAVIOR"
+          text: strings.t("settings.notifications.behavior")
           color: view.dim
           font.family: view.fontFamily
           font.pixelSize: Style.font.caption
@@ -536,8 +548,8 @@ Item {
 
         SettingBlock {
           width: parent.width
-          label: "Enter opens"
-          description: "Choose what the Enter key does on a selected notification."
+          label: strings.t("settings.notifications.enterOpens")
+          description: strings.t("settings.notifications.enterOpensDescription")
           active: view.active(view.idx.enterOpens)
           foreground: view.fg
           accent: view.accent
@@ -547,8 +559,8 @@ Item {
           SegmentedControl {
             width: parent.width
             options: [
-              { value: "app", label: "Open app" },
-              { value: "detail", label: "Details" }
+              { value: "app", label: strings.t("settings.notifications.openApp") },
+              { value: "detail", label: strings.t("settings.notifications.details") }
             ]
             value: view.store ? view.store.enterOpens : "app"
             foreground: view.fg
@@ -563,8 +575,8 @@ Item {
 
         Toggle {
           width: parent.width
-          label: "Hint bar"
-          description: "Show the context-sensitive key hints at the bottom."
+          label: strings.t("settings.notifications.hintBar")
+          description: strings.t("settings.notifications.hintBarDescription")
           checked: view.store ? view.store.shortcutBar : true
           hasCursor: view.active(view.idx.shortcutBar)
           foreground: view.fg
@@ -580,7 +592,7 @@ Item {
         Text {
           width: parent.width
           textFormat: Text.PlainText
-          text: "PRIVACY"
+          text: strings.t("settings.notifications.privacy")
           color: view.dim
           font.family: view.fontFamily
           font.pixelSize: Style.font.caption
@@ -591,8 +603,8 @@ Item {
 
         Toggle {
           width: parent.width
-          label: "Hide bodies"
-          description: "Keep titles and app names visible, but conceal the text content."
+          label: strings.t("settings.notifications.hideBodies")
+          description: strings.t("settings.notifications.hideBodiesDescription")
           checked: view.store ? view.store.hideBodies : false
           hasCursor: view.active(view.idx.hideBodies)
           foreground: view.fg
@@ -607,8 +619,8 @@ Item {
 
         Toggle {
           width: parent.width
-          label: "Image previews"
-          description: "Show notification artwork and sender images."
+          label: strings.t("settings.notifications.showPreviews")
+          description: strings.t("settings.notifications.showPreviewsDescription")
           checked: view.store ? view.store.showPreviews : true
           hasCursor: view.active(view.idx.showPreviews)
           foreground: view.fg
@@ -623,8 +635,8 @@ Item {
 
         Toggle {
           width: parent.width
-          label: "Unread badge"
-          description: "Show the unread count on the bar bell."
+          label: strings.t("settings.notifications.showBadge")
+          description: strings.t("settings.notifications.showBadgeDescription")
           checked: view.store ? view.store.showBadge : true
           hasCursor: view.active(view.idx.showBadge)
           foreground: view.fg
@@ -639,8 +651,8 @@ Item {
 
         Toggle {
           width: parent.width
-          label: "Capture history"
-          description: "Let the engine write notifications to the archive the center reads."
+          label: strings.t("settings.notifications.captureToasts")
+          description: strings.t("settings.notifications.captureToastsDescription")
           checked: view.store ? view.store.captureToasts : true
           hasCursor: view.active(view.idx.captureToasts)
           foreground: view.fg
@@ -663,7 +675,7 @@ Item {
         Text {
           width: parent.width
           textFormat: Text.PlainText
-          text: "Keys are active while the center has focus."
+          text: strings.t("settings.shortcuts.note")
           color: view.dim
           font.family: view.fontFamily
           font.pixelSize: Style.font.caption
@@ -673,8 +685,8 @@ Item {
         KeyChoiceRow {
           width: parent.width
           rowIndex: view.idx.searchKey
-          title: "Search"
-          description: "Open the search field."
+          title: strings.t("settings.shortcuts.search")
+          description: strings.t("settings.shortcuts.searchDescription")
           options: [
             { value: "/", label: "/" },
             { value: "ctrl+f", label: "Ctrl+F" }
@@ -686,8 +698,8 @@ Item {
         KeyChoiceRow {
           width: parent.width
           rowIndex: view.idx.dndKey
-          title: "Do Not Disturb"
-          description: "Toggle notification silencing."
+          title: strings.t("settings.shortcuts.dnd")
+          description: strings.t("settings.shortcuts.dndDescription")
           options: [
             { value: "d", label: "d" },
             { value: "D", label: "Shift+D" }
@@ -699,8 +711,8 @@ Item {
         KeyChoiceRow {
           width: parent.width
           rowIndex: view.idx.detailKey
-          title: "Details"
-          description: "Open the selected notification."
+          title: strings.t("settings.shortcuts.details")
+          description: strings.t("settings.shortcuts.detailsDescription")
           options: [
             { value: "i", label: "i" },
             { value: "I", label: "Shift+I" }
@@ -712,8 +724,8 @@ Item {
         KeyChoiceRow {
           width: parent.width
           rowIndex: view.idx.helpKey
-          title: "Help"
-          description: "Show the keyboard reference."
+          title: strings.t("settings.shortcuts.help")
+          description: strings.t("settings.shortcuts.helpDescription")
           options: [
             { value: "?", label: "?" },
             { value: "F1", label: "F1" }
@@ -725,8 +737,8 @@ Item {
         KeyChoiceRow {
           width: parent.width
           rowIndex: view.idx.settingsKey
-          title: "Settings"
-          description: "Open this page."
+          title: strings.t("settings.shortcuts.settings")
+          description: strings.t("settings.shortcuts.settingsDescription")
           options: [
             { value: "s", label: "s" },
             { value: "P", label: "Shift+P" }
@@ -783,7 +795,7 @@ Item {
                 Text {
                   Layout.fillWidth: true
                   textFormat: Text.PlainText
-                  text: "Notification engine"
+                  text: strings.t("settings.engine.title")
                   color: view.fg
                   font.family: view.fontFamily
                   font.pixelSize: Style.font.body
@@ -817,8 +829,8 @@ Item {
                 Layout.fillWidth: true
                 textFormat: Text.PlainText
                 text: view.engineActive
-                  ? "Owns the freedesktop server, live toasts and the archive."
-                  : "The center can use the stock service, or install the engine for archive capture and action controls."
+                  ? strings.t("settings.engine.owns")
+                  : strings.t("settings.engine.stockDescription")
                 color: view.dim
                 font.family: view.fontFamily
                 font.pixelSize: Style.font.caption
@@ -846,8 +858,8 @@ Item {
 
         Toggle {
           width: parent.width
-          label: "Run notification actions"
-          description: "Allow click actions sent by applications. They run as an argv vector, never through a shell."
+          label: strings.t("settings.engine.actions")
+          description: strings.t("settings.engine.actionsDescription")
           checked: view.store ? view.store.allowExecActions : true
           hasCursor: view.active(view.idx.allowExecActions)
           foreground: view.fg
@@ -862,8 +874,8 @@ Item {
 
         Toggle {
           width: parent.width
-          label: "Allow DND bypass"
-          description: "Let confirmation toasts from Omarchy through Do Not Disturb."
+          label: strings.t("settings.engine.dndBypass")
+          description: strings.t("settings.engine.dndBypassDescription")
           checked: view.store ? view.store.dndBypass : true
           hasCursor: view.active(view.idx.dndBypass)
           foreground: view.fg
@@ -901,7 +913,7 @@ Item {
             Text {
               Layout.fillWidth: true
               textFormat: Text.PlainText
-              text: "App names are chosen by senders, so a local app can impersonate another. Block actions or DND bypass above to refuse those requests."
+              text: strings.t("settings.engine.securityNote")
               color: view.dim
               font.family: view.fontFamily
               font.pixelSize: Style.font.caption
@@ -919,8 +931,8 @@ Item {
 
         SettingBlock {
           width: parent.width
-          label: "Bar section"
-          description: "Move the bell between the left, center and right groups."
+          label: strings.t("settings.bar.section")
+          description: strings.t("settings.bar.sectionDescription")
           active: view.active(view.idx.barSection)
           foreground: view.fg
           accent: view.accent
@@ -930,9 +942,9 @@ Item {
           SegmentedControl {
             width: parent.width
             options: [
-              { value: "left", label: "Left" },
-              { value: "center", label: "Center" },
-              { value: "right", label: "Right" }
+              { value: "left", label: strings.t("settings.bar.left") },
+              { value: "center", label: strings.t("settings.bar.center") },
+              { value: "right", label: strings.t("settings.bar.right") }
             ]
             value: view.store ? view.store.barSection : ""
             foreground: view.fg
@@ -947,8 +959,8 @@ Item {
 
         SettingBlock {
           width: parent.width
-          label: "Position in section"
-          description: "Drag to the exact index without leaving the center."
+          label: strings.t("settings.bar.index")
+          description: strings.t("settings.bar.indexDescription")
           active: view.active(view.idx.barIndex)
           foreground: view.fg
           accent: view.accent
@@ -1004,8 +1016,8 @@ Item {
 
         Toggle {
           width: parent.width
-          label: "Confirm before clearing"
-          description: "Require a second activation before deleting the whole history."
+          label: strings.t("settings.data.confirm")
+          description: strings.t("settings.data.confirmDescription")
           checked: view.store ? view.store.confirmClear : true
           hasCursor: view.active(view.idx.confirmClear)
           foreground: view.fg
@@ -1034,7 +1046,7 @@ Item {
             Text {
               Layout.fillWidth: true
               textFormat: Text.PlainText
-              text: "History"
+              text: strings.t("settings.data.history")
               color: view.fg
               font.family: view.fontFamily
               font.pixelSize: Style.font.body
@@ -1045,9 +1057,9 @@ Item {
               Layout.fillWidth: true
               textFormat: Text.PlainText
               text: view.store
-                ? view.store.entries.length + " saved notification"
-                  + (view.store.entries.length === 1 ? "" : "s")
-                  + " · " + view.store.archiveRetentionDays + "-day retention"
+                ? strings.tn("settings.data.historySummary", view.store.entries.length)
+                    .arg(Commons.I18n.formatNumber(view.store.entries.length))
+                    .arg(Commons.I18n.formatNumber(view.store.archiveRetentionDays))
                 : ""
               color: view.dim
               font.family: view.fontFamily
@@ -1057,7 +1069,9 @@ Item {
 
             Button {
               Layout.fillWidth: true
-              text: view.panel && view.panel.clearArmed ? "Confirm clear" : "Clear all notifications"
+              text: view.panel && view.panel.clearArmed
+                ? strings.t("settings.data.confirmClear")
+                : strings.t("settings.data.clearAll")
               iconText: "󰆴"
               bordered: true
               selected: view.panel && view.panel.clearArmed
@@ -1077,7 +1091,8 @@ Item {
               Layout.fillWidth: true
               horizontalAlignment: Text.AlignHCenter
               textFormat: Text.PlainText
-              text: view.panel && view.panel.clearArmed ? "Press again to confirm" : ""
+              text: view.panel && view.panel.clearArmed
+                ? strings.t("settings.data.pressAgain") : ""
               color: view.urgent
               font.family: view.fontFamily
               font.pixelSize: Style.font.caption
@@ -1127,7 +1142,8 @@ Item {
         Layout.preferredWidth: Style.space(44)
         horizontalAlignment: Text.AlignRight
         textFormat: Text.PlainText
-        text: sliderRow.sliderValue + " px"
+        text: strings.t("settings.layout.valuePx")
+          .arg(Commons.I18n.formatNumber(sliderRow.sliderValue))
         color: view.fg
         font.family: view.fontFamily
         font.pixelSize: Style.font.bodySmall

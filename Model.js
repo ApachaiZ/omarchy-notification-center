@@ -383,18 +383,35 @@ function parseCenterState(raw) {
 
 // ---- presentation --------------------------------------------------------
 
-function timeAgo(ts, now) {
+// Relative age split into a catalog key and a count, so the QML caller can
+// pluralize with strings.tn() in the active language. `key` is empty once the
+// notification is older than a week; `date` then carries the timestamp to
+// format with the display locale. A null result means the timestamp is
+// missing or invalid.
+function timeAgoParts(ts, now) {
   var value = Number(ts)
-  if (!isFinite(value) || value <= 0) return ""
+  if (!isFinite(value) || value <= 0) return null
   var diff = Math.max(0, Number(now) - value)
-  if (diff < 45000) return "just now"
+  if (diff < 45000) return { key: "time.justNow", count: 0, date: 0 }
   var m = Math.floor(diff / 60000)
-  if (m < 60) return m + "m ago"
+  if (m < 60) return { key: "time.minutesAgo", count: m, date: 0 }
   var h = Math.floor(m / 60)
-  if (h < 24) return h + "h ago"
+  if (h < 24) return { key: "time.hoursAgo", count: h, date: 0 }
   var d = Math.floor(h / 24)
-  if (d < 7) return d + "d ago"
-  var date = new Date(Number(ts))
+  if (d < 7) return { key: "time.daysAgo", count: d, date: 0 }
+  return { key: "", count: 0, date: value }
+}
+
+// English label kept for callers without a catalog (and the Node tests).
+// The UI uses timeAgoParts() so it can translate and pluralize instead.
+function timeAgo(ts, now) {
+  var parts = timeAgoParts(ts, now)
+  if (!parts) return ""
+  if (parts.key === "time.justNow") return "just now"
+  if (parts.key === "time.minutesAgo") return parts.count + "m ago"
+  if (parts.key === "time.hoursAgo") return parts.count + "h ago"
+  if (parts.key === "time.daysAgo") return parts.count + "d ago"
+  var date = new Date(parts.date)
   return date.getDate() + " " + ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][date.getMonth()]
 }
 
@@ -502,6 +519,7 @@ if (typeof module !== "undefined") {
     parseSettings: parseSettings,
     parseCenterState: parseCenterState,
     timeAgo: timeAgo,
+    timeAgoParts: timeAgoParts,
     emptyEntry: emptyEntry
   }
 }
