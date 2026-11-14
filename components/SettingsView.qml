@@ -40,10 +40,15 @@ Item {
 
   function engineStatusText() {
     if (!store) return ""
+    var status = ""
     if (engineActive) {
-      return engineInstalled
+      status = engineInstalled
         ? strings.t("settings.engine.activeVersion").arg(store.engineVersion)
         : strings.t("settings.engine.active")
+      // Updating is a deliberate two-click action; only recommend it here.
+      if (store.engineUpdateRecommended)
+        status += " · " + strings.t("settings.engine.update")
+      return status
     }
     if (engineInstalled) return strings.t("settings.engine.disabled")
     return strings.t("settings.engine.notInstalled")

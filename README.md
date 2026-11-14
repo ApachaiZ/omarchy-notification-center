@@ -72,9 +72,13 @@ All captures use synthetic notification content.
   and removes the whole tree once the last reference disappears, so an
   installed-but-disabled engine cannot keep old data alive. An enabled engine
   at least 1.0.5 migrates the archive and cleans expired images itself; an
-  enabled older engine is updated once per session, and the legacy tree stays
-  untouched until the updated engine takes over, so retained history never
-  loses the image copies or the archive it still has to merge.
+  enabled older engine keeps the legacy tree untouched until the user updates
+  it from Settings (the button reports the recommendation and asks for a
+  confirming click), so retained history never loses the image copies or the
+  archive it still has to merge. Files the center reads are capped (16 MiB for
+  the live/history data and the engine archive, 1 MiB for the shell config,
+  64 KiB for state and settings); a larger or unreadable file is refused whole
+  and the previous state is kept instead of being partially parsed.
 - **Keyboard control** — arrows or `h`/`j`/`k`/`l`, `Enter`, `Del`/`x`, `/`
   search, `d` Do Not Disturb, `Shift+C` clear, `g`/`G`, `?`, `Esc`, and
   the Settings key (default `s`). The search, DND, details, settings, and

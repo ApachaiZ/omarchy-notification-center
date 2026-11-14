@@ -3,6 +3,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import "../Model.js" as Model
+import "../js/Bounds.js" as Bounds
 
 // Data half of the notification center: everything the bar bell needs
 // (unread count, DND state) plus the live/history merge and the action queue.
@@ -24,6 +25,7 @@ Item {
   readonly property string settingsPath: home + "/.local/state/omarchy/notifications.json"
   readonly property string centerStatePath: home + "/.local/state/omarchy/notifications-center.json"
   readonly property string archivePath: home + "/.local/state/omarchy/notifications-archive.json"
+  readonly property string shellConfigPath: home + "/.config/omarchy/shell.json"
   readonly property string historyDir: stateDir + "/history"
   readonly property string engineRepoUrl: "https://github.com/ApachaiZ/omarchy-notification-engine"
   readonly property string engineDir: home + "/.config/omarchy/plugins/apach.notification-engine"
@@ -96,8 +98,11 @@ Item {
   property string lastLiveRaw: ""
   property string lastHistoryRaw: ""
   property string lastArchiveRaw: ""
+  // Bounded raw snapshot of the center state file. flushScreens() patches it
+  // instead of calling FileView.text(), which would read the whole file.
+  property string centerStateRaw: ""
 
-  // ---- action queue (one serialized Process for all mutating actions) ----
+  // ---- action queue (one serialized bounded helper for mutating actions) ----
   property var actionQueue: []
   // Two-step install for the optional engine: the first click arms, the second
   // installs. The warning is visible in the settings row.
@@ -113,10 +118,13 @@ Item {
 
   Component.onCompleted: {
     store.refresh()
+    // FileView only watches from now on; every read goes through a bounded
+    // helper. A missing file is classified by a bounded probe before any
+    // default is applied.
+    store.readCenterState()
+    store.readShellConfig()
+    store.readEngineManifest()
     store.cleanupLegacyArchive()
-    // FileView can fire onLoaded more than once during startup; the guard
-    // inside loadCenterState handles that.
-    Qt.callLater(function() { centerStateFile.reload() })
   }
 
   property bool legacyCleanupDelegated: false
@@ -128,7 +136,15 @@ Item {
   property string engineVersion: ""
   property bool engineManifestLoaded: false
   property bool engineVersionSafe: false
-  property bool engineUpdateAttempted: false
+  // The center never updates the engine on its own. An outdated enabled engine
+  // only raises this recommendation; the Settings button performs the update
+  // through the existing two-click confirmation flow.
+  property bool engineUpdateRecommended: false
+  // Read bookkeeping: each start bumps its kind's generation so a late probe
+  // or result can never overwrite a newer successful read.
+  property var readGenerations: ({})
+  property var pendingReads: ({})
+  property var fileProbeQueue: []
 
   // The v3 center keeps no private archive. With the stock service the old
   // v1.6 archive would otherwise sit on disk forever, past its retention and
@@ -180,7 +196,10 @@ Item {
       // change rather than latching a permanent skip.
       if (store.legacyPruneSignature === "delete") return
       store.legacyPruneSignature = "delete"
-      if (!legacyCleanupProc.running) legacyCleanupProc.running = true
+      if (!legacyCleanupProc.running &&
+          !legacyCleanupProc.start(["bash", "-c",
+            '[[ -d "$1" ]] || exit 0\nrm -rf -- "$1"', "--", store.legacyDir]))
+        store.legacyPruneSignature = ""
       return
     }
     if (plan.action !== "prune") return
@@ -194,23 +213,283 @@ Item {
     var argv = Model.legacyPruneArgv(store.legacyDir, keep)
     if (!argv) return
     store.legacyPruneSignature = signature
-    store.enqueueAction(argv)
+    if (!store.enqueueAction(argv, Bounds.LIMITS.clearTimeoutSeconds))
+      store.legacyPruneSignature = ""
   }
 
+  // An existing installation can have an old engine enabled while the center
+  // is updated. Updating it requires a network clone/merge, so the center only
+  // recommends it; Settings runs the existing two-click install/update flow
+  // and the engine keeps owning the legacy tree until the user confirms.
   function maybeUpdateEngine() {
-    if (!store.engineEnabled || !store.engineManifestLoaded) return
-    if (store.engineVersionSafe || store.engineUpdateAttempted) return
-    store.engineUpdateAttempted = true
-    engineUpdateProc.running = true
+    if (!store.engineEnabled || !store.engineManifestLoaded) {
+      store.engineUpdateRecommended = false
+      return
+    }
+    store.engineUpdateRecommended = !store.engineVersionSafe
   }
 
   // ---- data ----
 
   function refresh() {
-    if (!liveReadProc.running) liveReadProc.running = true
-    if (!historyReadProc.running) historyReadProc.running = true
-    archiveFile.reload()
-    settingsFile.reload()
+    store.readLive()
+    store.readHistory()
+    store.readArchive()
+    store.readSettings()
+  }
+
+  // ---- bounded reads -------------------------------------------------------
+
+  // FileView is only a change notification and a writer. Every read is a
+  // producer-bounded helper: a huge or hostile file never reaches the QML
+  // string as a whole, and an overflow is refused instead of parsed.
+  function startRead(proc, argv, kind) {
+    var tag = store.nextReadTag(kind)
+    if (proc.start(argv, tag)) return true
+    store.handleReadFailure(tag, {
+      canceled: false, overflow: false, timedOut: false, startFailed: true
+    })
+    return false
+  }
+
+  function nextReadTag(kind) {
+    var map = store.readGenerations
+    map[kind] = Number(map[kind] || 0) + 1
+    store.readGenerations = map
+    return { kind: kind, generation: map[kind] }
+  }
+
+  function isCurrentRead(tag) {
+    if (!tag || typeof tag !== "object") return false
+    return Number(tag.generation) === Number(store.readGenerations[tag.kind] || 0)
+  }
+
+  function markReadPending(kind) {
+    var map = store.pendingReads
+    map[kind] = true
+    store.pendingReads = map
+  }
+
+  function takeReadPending(kind) {
+    if (store.pendingReads[kind] !== true) return false
+    var map = ({})
+    for (var key in store.pendingReads)
+      if (key !== kind) map[key] = true
+    store.pendingReads = map
+    return true
+  }
+
+  function readLive() {
+    if (liveReadProc.running) { store.markReadPending("live"); return }
+    store.startRead(liveReadProc, ["bash", "-c",
+      'awk 1 "$1"/*.json 2>/dev/null || true', "--", store.stateDir], "live")
+  }
+
+  function readHistory() {
+    if (historyReadProc.running) { store.markReadPending("history"); return }
+    store.startRead(historyReadProc, ["bash", "-c",
+      'awk 1 "$1"/*.json 2>/dev/null || true', "--", store.historyDir], "history")
+  }
+
+  function readArchive() {
+    if (archiveReadProc.running) { store.markReadPending("archive"); return }
+    store.startRead(archiveReadProc,
+      Bounds.fileReadCommand(store.archivePath, Bounds.LIMITS.archiveBytes), "archive")
+  }
+
+  function readSettings() {
+    if (settingsReadProc.running) { store.markReadPending("settings"); return }
+    store.startRead(settingsReadProc,
+      Bounds.fileReadCommand(store.settingsPath, Bounds.LIMITS.settingsBytes), "settings")
+  }
+
+  function readCenterState() {
+    if (centerStateReadProc.running) { store.markReadPending("centerState"); return }
+    store.startRead(centerStateReadProc,
+      Bounds.fileReadCommand(store.centerStatePath, Bounds.LIMITS.centerStateBytes), "centerState")
+  }
+
+  function readShellConfig() {
+    if (shellConfigReadProc.running) { store.markReadPending("shellConfig"); return }
+    store.startRead(shellConfigReadProc,
+      Bounds.fileReadCommand(store.shellConfigPath, Bounds.LIMITS.shellConfigBytes), "shellConfig")
+  }
+
+  function readEngineManifest() {
+    if (engineManifestReadProc.running) { store.markReadPending("engineManifest"); return }
+    store.startRead(engineManifestReadProc,
+      Bounds.fileReadCommand(store.engineDir + "/manifest.json", Bounds.LIMITS.manifestBytes),
+      "engineManifest")
+  }
+
+  function finishLiveRead(result) {
+    if (store.isCurrentRead(result.tag)) {
+      if (result.ok) store.onLiveRead(result.out)
+      else store.handleReadFailure(result.tag, result)
+    }
+    if (store.takeReadPending("live")) store.readLive()
+  }
+
+  function finishHistoryRead(result) {
+    if (store.isCurrentRead(result.tag)) {
+      if (result.ok) store.onHistoryRead(result.out)
+      else store.handleReadFailure(result.tag, result)
+    }
+    if (store.takeReadPending("history")) store.readHistory()
+  }
+
+  function finishArchiveRead(result) {
+    if (store.isCurrentRead(result.tag)) {
+      if (result.ok) store.onArchiveLoaded(result.out)
+      else store.handleReadFailure(result.tag, result)
+    }
+    if (store.takeReadPending("archive")) store.readArchive()
+  }
+
+  function finishSettingsRead(result) {
+    if (store.isCurrentRead(result.tag)) {
+      if (result.ok) store.dnd = Model.parseSettings(result.out).dnd
+      else store.handleReadFailure(result.tag, result)
+    }
+    if (store.takeReadPending("settings")) store.readSettings()
+  }
+
+  function finishCenterStateRead(result) {
+    if (store.isCurrentRead(result.tag)) {
+      if (result.ok) {
+        store.centerStateRaw = result.out
+        store.loadCenterState(result.out)
+      } else {
+        store.handleReadFailure(result.tag, result)
+      }
+    }
+    if (store.takeReadPending("centerState")) store.readCenterState()
+  }
+
+  function finishShellConfigRead(result) {
+    if (store.isCurrentRead(result.tag)) {
+      if (result.ok) store.parseShellConfig(result.out)
+      else store.handleReadFailure(result.tag, result)
+    }
+    if (store.takeReadPending("shellConfig")) store.readShellConfig()
+  }
+
+  function finishEngineManifestRead(result) {
+    if (store.isCurrentRead(result.tag)) {
+      if (result.ok) store.applyEngineManifest(result.out)
+      else store.handleReadFailure(result.tag, result)
+    }
+    if (store.takeReadPending("engineManifest")) store.readEngineManifest()
+  }
+
+  // A refused read keeps the previous in-memory state. Only a bounded probe
+  // proving the file absent may apply defaults.
+  function handleReadFailure(tag, result) {
+    var kind = tag && typeof tag === "object" ? String(tag.kind || "") : ""
+    if (kind === "" || result.canceled) return
+    if (Number(result.code) === Bounds.LIMITS.fileTooLargeCode) {
+      console.warn("notifications: " + kind + " file exceeds its byte cap; keeping the previous state")
+      return
+    }
+    if (result.overflow) {
+      console.warn("notifications: " + kind + " read exceeded its byte cap; keeping the previous state")
+      return
+    }
+    if (result.timedOut) {
+      console.warn("notifications: " + kind + " read timed out; keeping the previous state")
+      return
+    }
+    if (result.startFailed) {
+      console.warn("notifications: " + kind + " reader could not start; keeping the previous state")
+      return
+    }
+    store.queueFileProbe(kind)
+  }
+
+  function queueFileProbe(kind) {
+    if (store.fileProbeQueue.length >= Bounds.LIMITS.probeQueueItems) {
+      console.warn("notifications: file probe queue full; keeping the previous " + kind + " state")
+      return
+    }
+    store.fileProbeQueue = store.fileProbeQueue.concat([{
+      kind: kind,
+      generation: Number(store.readGenerations[kind] || 0)
+    }])
+    store.runNextFileProbe()
+  }
+
+  function runNextFileProbe() {
+    if (fileStateProc.running || store.fileProbeQueue.length === 0) return
+    var item = store.fileProbeQueue[0]
+    store.fileProbeQueue = store.fileProbeQueue.slice(1)
+    var path = store.readPath(item.kind)
+    if (path === "") {
+      store.runNextFileProbe()
+      return
+    }
+    fileStateProc.start(Bounds.fileStateCommand(path), item)
+  }
+
+  function finishFileProbe(result) {
+    var item = result.tag
+    if (item && typeof item === "object") {
+      var current = Number(store.readGenerations[item.kind] || 0)
+      if (Number(item.generation) === current) {
+        var state = Bounds.fileStateFromExit(result)
+        if (Bounds.readFailurePolicy(state) === "absent")
+          store.applyMissingFile(item.kind)
+        else if (!result.canceled)
+          console.warn("notifications: " + item.kind + " file could not be inspected; keeping the previous state")
+      }
+    }
+    store.runNextFileProbe()
+  }
+
+  function readPath(kind) {
+    if (kind === "settings") return store.settingsPath
+    if (kind === "centerState") return store.centerStatePath
+    if (kind === "shellConfig") return store.shellConfigPath
+    if (kind === "engineManifest") return store.engineDir + "/manifest.json"
+    if (kind === "archive") return store.archivePath
+    if (kind === "live") return store.stateDir
+    if (kind === "history") return store.historyDir
+    return ""
+  }
+
+  function applyMissingFile(kind) {
+    if (kind === "settings") {
+      store.dnd = false
+    } else if (kind === "centerState") {
+      store.centerStateRaw = ""
+      store.loadCenterState("")
+    } else if (kind === "shellConfig") {
+      store.parseShellConfig("{}")
+    } else if (kind === "engineManifest") {
+      store.applyMissingEngineManifest()
+    } else if (kind === "archive") {
+      store.onArchiveLoaded("")
+    } else if (kind === "live") {
+      store.onLiveRead("")
+    } else if (kind === "history") {
+      store.onHistoryRead("")
+    }
+  }
+
+  function applyEngineManifest(raw) {
+    store.engineVersion = Model.manifestVersion(raw)
+    store.engineVersionSafe = Model.versionAtLeast(store.engineVersion, "1.0.5")
+    store.engineManifestLoaded = true
+    store.maybeUpdateEngine()
+    store.cleanupLegacyArchive()
+  }
+
+  function applyMissingEngineManifest() {
+    if (store.engineManifestLoaded) return
+    store.engineVersion = ""
+    store.engineVersionSafe = false
+    store.engineManifestLoaded = true
+    store.maybeUpdateEngine()
+    store.cleanupLegacyArchive()
   }
 
   function onLiveRead(raw) {
@@ -220,7 +499,8 @@ Item {
       return
     }
     store.lastLiveRaw = raw
-    store.liveEntries = store.filterSuppressed(Model.parseEntries(raw, "live"))
+    store.liveEntries = store.filterSuppressed(
+      Model.parseEntries(raw, "live", Model.limits.liveEntries))
     store.rebuildEntries()
     store.cleanupLegacyArchive()
   }
@@ -232,7 +512,8 @@ Item {
       return
     }
     store.lastHistoryRaw = raw
-    store.historyEntries = store.filterSuppressed(Model.parseEntries(raw, "history"))
+    store.historyEntries = store.filterSuppressed(
+      Model.parseEntries(raw, "history", Model.limits.archiveEntries))
     store.rebuildArchive()
     store.cleanupLegacyArchive()
   }
@@ -244,7 +525,8 @@ Item {
       return
     }
     store.lastArchiveRaw = raw
-    store.archiveFileEntries = store.filterSuppressed(Model.parseArchive(raw))
+    store.archiveFileEntries = store.filterSuppressed(
+      Model.parseArchive(raw, Model.limits.archiveEntries))
     store.rebuildArchive()
     store.cleanupLegacyArchive()
   }
@@ -253,12 +535,14 @@ Item {
     // The engine writes one archive JSON; the stock service writes one file
     // per entry under history/. Merge both so the center works with either.
     store.archiveEntries = store.filterSuppressed(
-      Model.mergeEntries(store.archiveFileEntries, store.historyEntries))
+      Model.mergeEntries(store.archiveFileEntries, store.historyEntries,
+        Model.limits.archiveEntries))
     store.rebuildEntries()
   }
 
   function rebuildEntries() {
-    var merged = store.filterSuppressed(Model.mergeEntries(store.liveEntries, store.archiveEntries))
+    var merged = store.filterSuppressed(
+      Model.mergeEntries(store.liveEntries, store.archiveEntries, Model.limits.mergedEntries))
     var sig = Model.signature(merged)
     if (sig === store.mergeSignature) return
     store.entries = merged
@@ -349,8 +633,8 @@ Item {
   }
 
   function reloadState() {
-    centerStateFile.reload()
-    shellConfigFile.reload()
+    store.readCenterState()
+    store.readShellConfig()
   }
 
   // ---- bar placement (read-only view of shell.json) ----
@@ -408,7 +692,7 @@ Item {
   }
 
   function flushCenterState() {
-    centerStateFile.setText(JSON.stringify({
+    var text = JSON.stringify({
       version: 1,
       lastSeen: store.lastSeen,
       placement: store.placement,
@@ -432,7 +716,11 @@ Item {
       detailKey: store.detailKey,
       helpKey: store.helpKey,
       settingsKey: store.settingsKey
-    }) + "\n")
+    }) + "\n"
+    // Keep the bounded snapshot in sync with our own write so a following
+    // flushScreens() patches the current file, not a stale read.
+    store.centerStateRaw = text
+    centerStateFile.setText(text)
   }
 
   function defaultScreenName() {
@@ -472,7 +760,7 @@ Item {
     if (!store.centerStateLoaded) return
     var payload = ({})
     try {
-      var parsed = JSON.parse(String(centerStateFile.text() || "").trim())
+      var parsed = JSON.parse(String(store.centerStateRaw || "").trim())
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) payload = parsed
     } catch (e) {
       payload = ({})
@@ -480,7 +768,9 @@ Item {
     payload.version = 1
     payload.screens = store.screenNames
     delete payload.screen
-    centerStateFile.setText(JSON.stringify(payload) + "\n")
+    var text = JSON.stringify(payload) + "\n"
+    store.centerStateRaw = text
+    centerStateFile.setText(text)
   }
 
   function toggleScreen(name) {
@@ -615,7 +905,8 @@ Item {
       '  omarchy plugin enable apach.notification-engine\n' +
       'else\n' +
       '  omarchy plugin add "$2" --enable --yes\n' +
-      'fi', "--", store.engineDir, store.engineRepoUrl])
+      'fi', "--", store.engineDir, store.engineRepoUrl],
+      Bounds.LIMITS.installTimeoutSeconds, "install")
   }
 
   Timer {
@@ -670,17 +961,53 @@ Item {
 
   // ---- actions ----
 
-  function enqueueAction(argv) {
-    store.actionQueue = store.actionQueue.concat([argv])
+  // A full queue refuses the newest request and logs it: an action that was
+  // already accepted (a destructive clear, for example) must still run.
+  function enqueueAction(argv, timeoutSeconds, tag) {
+    var item = {
+      argv: argv,
+      timeoutSeconds: Math.max(1, Math.ceil(Number(timeoutSeconds) ||
+        Bounds.LIMITS.actionTimeoutSeconds)),
+      tag: tag === undefined ? null : tag
+    }
+    var queued = Bounds.enqueueBounded(store.actionQueue, item, Bounds.LIMITS.queueItems)
+    store.actionQueue = queued.queue
+    if (!queued.accepted) {
+      console.warn("notifications: action queue full; refusing " +
+        String((argv && argv[0]) || "action"))
+      return false
+    }
     store.runNextAction()
+    return true
   }
 
   function runNextAction() {
     if (actionProc.running || store.actionQueue.length === 0) return
-    var argv = store.actionQueue[0]
+    var item = store.actionQueue[0]
     store.actionQueue = store.actionQueue.slice(1)
-    actionProc.command = argv
-    actionProc.running = true
+    var seconds = Math.max(1, Math.ceil(Number(item.timeoutSeconds) ||
+      Bounds.LIMITS.actionTimeoutSeconds))
+    // The producer's own `timeout` fires first; the QML deadline is a backstop
+    // for a hung grandchild or a missed `exited`.
+    actionProc.producerTimeoutSeconds = seconds
+    actionProc.timeoutMs = seconds * 1000 + 1000
+    if (actionProc.start(item.argv, item.tag)) return
+    // A failed start never emits `finished`; settle the queue explicitly so
+    // one unschedulable action cannot block every later one.
+    console.warn("notifications: action could not be started; dropping it")
+    store.runNextAction()
+  }
+
+  function finishAction(result) {
+    if (!result.ok && !result.canceled) {
+      var detail = String(result.err || "").trim()
+      console.warn("notifications: action failed" + (detail === "" ? "" : ": " + detail))
+    }
+    if (result.ok && result.tag === "install") {
+      store.readEngineManifest()
+      store.readShellConfig()
+    }
+    store.runNextAction()
   }
 
   // Remove one notification. The service owns both the live popup and the
@@ -736,7 +1063,7 @@ Item {
       '  rm -f -- "$4"/*\n' +
       'fi',
       "--", store.legacyDir, direct ? "direct" : "ipc", store.archivePath,
-      store.stateDir + "/images"])
+      store.stateDir + "/images"], Bounds.LIMITS.clearTimeoutSeconds)
     store.liveEntries = []
     store.archiveFileEntries = []
     store.historyEntries = []
@@ -762,85 +1089,146 @@ Item {
   }
 
   // ---- processes ----
+  //
+  // Every helper is producer- and receiver-bounded. FileView only watches and
+  // writes; it never loads a file into QML.
 
-  Process {
+  // The three 16 MiB reads pay a per-chunk collection cost on the receiver,
+  // so a slower machine can need several seconds even for a legitimate
+  // history. Give the producer 20 s and keep the QML deadline one second
+  // later as the backstop; both stay finite.
+
+  BoundedProcess {
     id: liveReadProc
-    command: ["bash", "-c", "awk 1 \"$1\"/*.json 2>/dev/null || true", "--", store.stateDir]
-    stdout: StdioCollector { waitForEnd: true; onStreamFinished: store.onLiveRead(text) }
+    producerTimeoutSeconds: 20
+    timeoutMs: 21000
+    maxOutBytes: Bounds.LIMITS.stateBytes
+    maxErrBytes: Bounds.LIMITS.helperErrBytes
+    onFinished: function(result) { store.finishLiveRead(result) }
   }
 
-  Process {
+  BoundedProcess {
     id: historyReadProc
-    command: ["bash", "-c", "awk 1 \"$1\"/*.json 2>/dev/null || true", "--", store.historyDir]
-    stdout: StdioCollector { waitForEnd: true; onStreamFinished: store.onHistoryRead(text) }
+    producerTimeoutSeconds: 20
+    timeoutMs: 21000
+    maxOutBytes: Bounds.LIMITS.stateBytes
+    maxErrBytes: Bounds.LIMITS.helperErrBytes
+    onFinished: function(result) { store.finishHistoryRead(result) }
   }
 
-  Process {
+  BoundedProcess {
     id: legacyCleanupProc
-    command: ["bash", "-c",
-      '[[ -d "$1" ]] || exit 0\nrm -rf -- "$1"',
-      "--", store.legacyDir]
-    running: false
-  }
-
-  // An existing installation can have an old engine enabled while the center
-  // is updated. Update it once per session; a live keepLoaded service still
-  // needs the next shell restart, but the legacy cleanup above falls back to
-  // the center until then. omarchy plugin update rescans plugins.
-  Process {
-    id: engineUpdateProc
-    command: ["omarchy", "plugin", "update", "apach.notification-engine", "--yes"]
-    running: false
-    onExited: engineManifestFile.reload()
-  }
-
-  Process {
-    id: actionProc
-    stdout: StdioCollector { waitForEnd: true }
-    stderr: StdioCollector { id: actionErr; waitForEnd: true }
-    onExited: function(code) {
-      if (code !== 0 && actionErr.text !== "")
-        console.warn("notifications: action failed:", actionErr.text)
-      store.runNextAction()
+    producerTimeoutSeconds: 25
+    timeoutMs: 30000
+    maxOutBytes: 4096
+    maxErrBytes: 4096
+    onFinished: function(result) {
+      if (result.ok) return
+      // Allow a later source change to retry the destructive sweep.
+      store.legacyPruneSignature = ""
+      if (!result.canceled)
+        console.warn("notifications: legacy cleanup failed; it will be retried")
     }
   }
 
+  BoundedProcess {
+    id: actionProc
+    producerTimeoutSeconds: Bounds.LIMITS.actionTimeoutSeconds
+    timeoutMs: Bounds.LIMITS.actionTimeoutSeconds * 1000 + 1000
+    maxOutBytes: Bounds.LIMITS.helperOutBytes
+    maxErrBytes: Bounds.LIMITS.helperErrBytes
+    onFinished: function(result) { store.finishAction(result) }
+  }
+
+  BoundedProcess {
+    id: settingsReadProc
+    producerTimeoutSeconds: 2
+    timeoutMs: 3000
+    maxOutBytes: Bounds.LIMITS.settingsBytes
+    maxErrBytes: Bounds.LIMITS.helperErrBytes
+    onFinished: function(result) { store.finishSettingsRead(result) }
+  }
+
+  BoundedProcess {
+    id: centerStateReadProc
+    producerTimeoutSeconds: 2
+    timeoutMs: 3000
+    maxOutBytes: Bounds.LIMITS.centerStateBytes
+    maxErrBytes: Bounds.LIMITS.helperErrBytes
+    onFinished: function(result) { store.finishCenterStateRead(result) }
+  }
+
+  BoundedProcess {
+    id: shellConfigReadProc
+    producerTimeoutSeconds: 2
+    timeoutMs: 3000
+    maxOutBytes: Bounds.LIMITS.shellConfigBytes
+    maxErrBytes: Bounds.LIMITS.helperErrBytes
+    onFinished: function(result) { store.finishShellConfigRead(result) }
+  }
+
+  BoundedProcess {
+    id: engineManifestReadProc
+    producerTimeoutSeconds: 2
+    timeoutMs: 3000
+    maxOutBytes: Bounds.LIMITS.manifestBytes
+    maxErrBytes: Bounds.LIMITS.helperErrBytes
+    onFinished: function(result) { store.finishEngineManifestRead(result) }
+  }
+
+  BoundedProcess {
+    id: archiveReadProc
+    producerTimeoutSeconds: 20
+    timeoutMs: 21000
+    maxOutBytes: Bounds.LIMITS.archiveBytes
+    maxErrBytes: Bounds.LIMITS.helperErrBytes
+    onFinished: function(result) { store.finishArchiveRead(result) }
+  }
+
+  BoundedProcess {
+    id: fileStateProc
+    producerTimeoutSeconds: 2
+    timeoutMs: 3000
+    maxOutBytes: Bounds.LIMITS.probeOutBytes
+    maxErrBytes: Bounds.LIMITS.probeErrBytes
+    onFinished: function(result) { store.finishFileProbe(result) }
+  }
+
   // ---- files & timers ----
+  //
+  // preload:false is the contract: a FileView here is a watcher and, for the
+  // center state, a writer. Reads go through the bounded helpers above.
 
   FileView {
     id: settingsFile
     path: store.settingsPath
     watchChanges: true
+    preload: false
     atomicWrites: false
     printErrors: false
-    onLoaded: store.dnd = Model.parseSettings(text()).dnd
-    onLoadFailed: store.dnd = false
-    onFileChanged: reload()
+    onFileChanged: store.readSettings()
   }
 
   FileView {
     id: centerStateFile
     path: store.centerStatePath
     watchChanges: true
+    preload: false
     // In-place writes: an atomic rename would detach every other bar
     // instance's watcher from the old inode.
     atomicWrites: false
     printErrors: false
-    onLoaded: store.loadCenterState(text())
-    onLoadFailed: store.loadCenterState("")
-    // watchChanges can miss a truncate+rewrite depending on timing; a
-    // reload on the event and on open() keeps every instance in sync.
-    onFileChanged: reload()
+    onFileChanged: store.readCenterState()
   }
 
   FileView {
     id: shellConfigFile
-    path: store.home + "/.config/omarchy/shell.json"
+    path: store.shellConfigPath
     watchChanges: true
+    preload: false
     atomicWrites: false
     printErrors: false
-    onLoaded: store.parseShellConfig(text())
-    onFileChanged: reload()
+    onFileChanged: store.readShellConfig()
   }
 
   // The engine version decides whether it can own the pre-3.0 migration. An
@@ -850,22 +1238,9 @@ Item {
     id: engineManifestFile
     path: store.engineDir + "/manifest.json"
     watchChanges: true
+    preload: false
     printErrors: false
-    onLoaded: {
-      store.engineVersion = Model.manifestVersion(text())
-      store.engineVersionSafe = Model.versionAtLeast(store.engineVersion, "1.0.5")
-      store.engineManifestLoaded = true
-      store.maybeUpdateEngine()
-      store.cleanupLegacyArchive()
-    }
-    onLoadFailed: {
-      if (store.engineManifestLoaded) return
-      store.engineVersion = ""
-      store.engineVersionSafe = false
-      store.engineManifestLoaded = true
-      store.cleanupLegacyArchive()
-    }
-    onFileChanged: reload()
+    onFileChanged: store.readEngineManifest()
   }
 
   // The optional engine writes one archive JSON; the stock service writes one
@@ -874,11 +1249,10 @@ Item {
     id: archiveFile
     path: store.archivePath
     watchChanges: true
+    preload: false
     atomicWrites: false
     printErrors: false
-    onLoaded: store.onArchiveLoaded(text())
-    onLoadFailed: store.onArchiveLoaded("")
-    onFileChanged: reload()
+    onFileChanged: store.readArchive()
   }
 
   // Directory watches are the primary trigger. The timers are only a safety
@@ -887,6 +1261,7 @@ Item {
     id: liveDirWatch
     path: store.stateDir
     watchChanges: true
+    preload: false
     printErrors: false
     onFileChanged: reloadTimer.restart()
   }
@@ -895,6 +1270,7 @@ Item {
     id: historyDirWatch
     path: store.historyDir
     watchChanges: true
+    preload: false
     printErrors: false
     onFileChanged: reloadTimer.restart()
   }

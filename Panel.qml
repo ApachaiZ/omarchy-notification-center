@@ -1,11 +1,13 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Templates as T
 import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
+import "js/Bounds.js" as Bounds
 import "components"
 
 // Notification center panel. Data comes from the files the active
@@ -48,6 +50,11 @@ Panel {
   property string cursorStem: ""
   property string query: ""
   property bool searchOpen: false
+  // Explicit paste only: opening the search field never touches the clipboard.
+  // A new gesture, focus loss or close bumps the generation, so a late read is
+  // discarded instead of inserted.
+  property int pasteGeneration: 0
+  property int activationGeneration: 0
   property bool clearArmed: false
   property bool helpOpen: false
   property int settingsCursor: 0
@@ -428,6 +435,8 @@ Panel {
   }
 
   function close() {
+    root.cancelPaste()
+    root.cancelActivation()
     root.controller.hide()
     root.settingsOpen = false
     root.helpOpen = false
@@ -461,6 +470,8 @@ Panel {
     root.store.setCenterOpen(root.opened)
     if (root.opened) root.store.refresh()
   }
+
+  onSearchOpenChanged: if (!root.searchOpen) root.cancelPaste()
 
   // Entries can change while the list is visible (watcher, poll, dismissal).
   // Keep the keyboard cursor and the detail selection valid.
@@ -552,8 +563,8 @@ Panel {
     if (["left", "center", "right"].indexOf(target) === -1) return
     var size = Number(root.store.barSizes[target] || 0)
     var at = Math.max(0, Math.min(Math.round(Number(index) || 0), size))
-    barMoveProc.command = ["omarchy", "bar", "move", "apach.notifications", "--section", target, "--index", String(at)]
-    barMoveProc.running = true
+    barMoveProc.start(["omarchy", "bar", "move", "apach.notifications",
+      "--section", target, "--index", String(at)])
   }
 
   // A section change appends: least surprising, then the index stepper refines.
@@ -569,9 +580,16 @@ Panel {
     root.moveBar(root.store.barSection, next)
   }
 
-  Process {
+  BoundedProcess {
     id: barMoveProc
-    stdout: StdioCollector { waitForEnd: true }
+    producerTimeoutSeconds: 7
+    timeoutMs: 8000
+    maxOutBytes: 4096
+    maxErrBytes: 4096
+    onFinished: function(result) {
+      if (!result.ok && !result.canceled)
+        console.warn("notifications: bar move failed")
+    }
   }
 
   // Clicking "Open app" focuses the application that sent the notification.
@@ -580,18 +598,13 @@ Panel {
   // safe equivalent of "open the notification".
   property var pendingActivation: null
 
-  Process {
+  BoundedProcess {
     id: focusAppProc
-    stdout: StdioCollector { waitForEnd: true }
-    onExited: function(code) {
-      var entry = root.pendingActivation
-      root.pendingActivation = null
-      if (code === 0) {
-        root.close()
-        return
-      }
-      if (entry) root.openDetail(entry)
-    }
+    producerTimeoutSeconds: 2
+    timeoutMs: 3000
+    maxOutBytes: 4096
+    maxErrBytes: 4096
+    onFinished: function(result) { root.finishActivation(result) }
   }
 
   function activateEntry(entry) {
@@ -601,9 +614,35 @@ Panel {
       root.openDetail(entry)
       return
     }
+    root.activationGeneration++
     root.pendingActivation = entry
-    focusAppProc.command = ["omarchy-hyprland-focus-app", app]
-    focusAppProc.running = true
+    // A failed start settles synchronously and runs finishActivation; an
+    // explicit rejection here only covers an empty argv/queue refusal.
+    if (!focusAppProc.start(["omarchy-hyprland-focus-app", app],
+        root.activationGeneration)) {
+      root.pendingActivation = null
+      root.openDetail(entry)
+    }
+  }
+
+  function finishActivation(result) {
+    // A newer activation (or a close) owns pendingActivation; a stale result
+    // must not clear it or open the previous detail view.
+    if (!Bounds.isCurrentGeneration(result.tag, root.activationGeneration)) return
+    var entry = root.pendingActivation
+    root.pendingActivation = null
+    if (result.canceled) return
+    if (result.ok) {
+      root.close()
+      return
+    }
+    if (entry) root.openDetail(entry)
+  }
+
+  function cancelActivation() {
+    root.activationGeneration++
+    focusAppProc.cancel()
+    root.pendingActivation = null
   }
 
   // ---- settings navigation ----
@@ -856,12 +895,81 @@ Panel {
   }
 
   function closeSearch() {
+    root.cancelPaste()
     root.searchOpen = false
     root.query = ""
     root.cursorIndex = -1
     var field = root.activeSearchField()
     if (field) field.text = ""
     Qt.callLater(function() { root.focusActiveContent() })
+  }
+
+  // ---- bounded clipboard paste ---------------------------------------------
+  //
+  // Qt's native paste (Ctrl+V, Shift+Insert, middle-click PRIMARY, and the
+  // ContextMenu PasteAction) reads the clipboard without a byte cap. The
+  // search field intercepts the keyboard gestures before QQuickTextInput sees
+  // them, wraps middle-click, and removes the native context menu entirely:
+  // its PasteAction shortcuts stay active while the menu is closed, even when
+  // the field is not focused. Every insert then comes from the bounded helper
+  // below. Only an explicit paste starts a read: opening the search field
+  // never touches the clipboard.
+
+  BoundedProcess {
+    id: pasteProc
+    producerTimeoutSeconds: 2
+    timeoutMs: 3000
+    maxOutBytes: Bounds.LIMITS.clipboardBytes
+    maxErrBytes: Bounds.LIMITS.clipboardErrBytes
+    onFinished: function(result) {
+      // A result from an older request (new paste, focus loss, close) must
+      // never be inserted.
+      if (!Bounds.isCurrentGeneration(result.tag, root.pasteGeneration)) return
+      if (result.canceled) return
+      // The producer's own `timeout` exits 124; the component deadline sets
+      // timedOut only when the wrapper itself had to be killed.
+      if (result.timedOut || result.code === 124) {
+        console.warn("notifications: clipboard read timed out")
+        return
+      }
+      if (result.startFailed || result.code === 126 || result.code === 127) {
+        console.warn("notifications: clipboard tool unavailable (wl-paste)")
+        return
+      }
+      if (result.overflow) {
+        console.warn("notifications: clipboard content exceeds the paste cap")
+        return
+      }
+      if (!result.ok) {
+        console.warn("notifications: clipboard read failed")
+        return
+      }
+      var field = root.activeSearchField()
+      if (!field) return
+      // A paste replaces the current selection, like the native edit does.
+      var selected = Math.max(0, field.selectionEnd - field.selectionStart)
+      var verdict = Bounds.insertionVerdict(result.out, field.text.length - selected,
+        Bounds.LIMITS.searchChars, Bounds.LIMITS.clipboardBytes)
+      if (!verdict.ok) {
+        console.warn("notifications: clipboard content refused (" + verdict.reason + ")")
+        return
+      }
+      if (verdict.text === "") return
+      if (selected > 0) field.remove(field.selectionStart, field.selectionEnd)
+      field.insert(field.cursorPosition, verdict.text)
+    }
+  }
+
+  function pasteFromClipboard(primary) {
+    root.pasteGeneration++
+    var tag = root.pasteGeneration
+    if (!pasteProc.start(Bounds.clipboardCommand(primary === true), tag))
+      console.warn("notifications: clipboard request refused; too many pending requests")
+  }
+
+  function cancelPaste() {
+    root.pasteGeneration++
+    pasteProc.cancel()
   }
 
   Timer {
@@ -1352,7 +1460,36 @@ Panel {
                 accent: Commons.Color.accent
                 font.pixelSize: Style.font.bodySmall
                 hasCursor: true
+                // Remove the native context menu: its PasteAction keeps a
+                // StandardKey.Paste shortcut active even while the menu is
+                // closed, which would bypass the bounded paste path. Keep
+                // Ctrl+C/X/A available through the normal editor.
+                T.ContextMenu.menu: null
+                // Defense in depth: no native paste can grow the filter past
+                // the character cap even if a path below is bypassed.
+                maximumLength: Bounds.LIMITS.searchChars
                 onTextChanged: root.query = text
+                onActiveFocusChanged: if (!activeFocus) root.cancelPaste()
+                // Intercept every keyboard paste gesture before
+                // QQuickTextInput runs its native, unbounded paste.
+                // BeforeItem is explicit so a future default change cannot
+                // silently restore native paste.
+                Keys.priority: Keys.BeforeItem
+                Keys.onPressed: function(event) {
+                  // No context menu exists to open; consume the standard menu
+                  // gestures anyway so no future default can restore one.
+                  if (event.key === Qt.Key_Menu ||
+                      (event.key === Qt.Key_F10 && (event.modifiers & Qt.ShiftModifier))) {
+                    event.accepted = true
+                    return
+                  }
+                  var pasteGesture = event.matches(StandardKey.Paste) ||
+                    (event.key === Qt.Key_V && (event.modifiers & Qt.ControlModifier)) ||
+                    (event.key === Qt.Key_Insert && (event.modifiers & Qt.ShiftModifier))
+                  if (!pasteGesture) return
+                  event.accepted = true
+                  root.pasteFromClipboard(false)
+                }
                 Keys.onEscapePressed: root.closeSearch()
                 Keys.onReturnPressed: {
                   keyCatcher.forceActiveFocus()
@@ -1366,6 +1503,21 @@ Panel {
                 Keys.onUpPressed: {
                   keyCatcher.forceActiveFocus()
                   root.moveCursor(-1)
+                }
+              }
+
+              // PRIMARY selection pastes on middle click inside
+              // QQuickTextInput::mouseReleaseEvent and cannot be intercepted
+              // with Keys. This area accepts only the middle button; left
+              // clicks pass through to the field for placement and cursor
+              // movement.
+              MouseArea {
+                anchors.fill: parent
+                acceptedButtons: Qt.MiddleButton
+                onPressed: function(mouse) {
+                  mouse.accepted = true
+                  searchField.forceActiveFocus()
+                  root.pasteFromClipboard(true)
                 }
               }
 

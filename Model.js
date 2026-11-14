@@ -79,6 +79,36 @@ var MAX_BODY_LENGTH = 8192
 var MAX_IMAGE_LENGTH = 2048
 var MAX_ICON_LENGTH = 2048
 
+// Entry-count caps, aligned with the engine's own archiveLimit (1000). Parsing
+// stops at the cap so a file with millions of lines cannot allocate rows
+// without bound. A live directory holds only on-screen popups, so its cap is
+// much smaller.
+var MAX_LIVE_ENTRIES = 128
+var MAX_ARCHIVE_ENTRIES = 1000
+var MAX_MERGED_ENTRIES = 1024
+
+// Top-level on purpose: QML exposes only top-level declarations of an
+// imported JS module, not `module.exports`. StoreSingleton.qml reads
+// Model.limits.*; keeping this table here (not inside the Node export block)
+// is what makes those reads work in the running shell.
+var limits = {
+  app: MAX_APP_LENGTH,
+  glyph: MAX_GLYPH_LENGTH,
+  summary: MAX_SUMMARY_LENGTH,
+  body: MAX_BODY_LENGTH,
+  image: MAX_IMAGE_LENGTH,
+  icon: MAX_ICON_LENGTH,
+  liveEntries: MAX_LIVE_ENTRIES,
+  archiveEntries: MAX_ARCHIVE_ENTRIES,
+  mergedEntries: MAX_MERGED_ENTRIES
+}
+
+function entryCap(value, fallback) {
+  var n = Math.floor(Number(value))
+  if (!isFinite(n) || n < 1) return fallback
+  return n
+}
+
 function clipText(value, max) {
   var text = String(value || "").replace(/\u0000/g, "")
   return text.length > max ? text.slice(0, max) : text
@@ -143,11 +173,18 @@ function parseRow(value, source) {
   return row
 }
 
-function parseEntries(raw, source) {
-  var lines = String(raw || "").split("\n")
+function parseEntries(raw, source, maxEntries) {
+  var text = String(raw || "")
+  var limit = entryCap(maxEntries, MAX_ARCHIVE_ENTRIES)
   var entries = []
-  for (var i = 0; i < lines.length; i++) {
-    var line = lines[i].trim()
+  // Walk lines without splitting the whole payload first: a raw file full of
+  // newlines must not allocate one string per line before the cap applies.
+  var start = 0
+  while (start <= text.length && entries.length < limit) {
+    var end = text.indexOf("\n", start)
+    if (end === -1) end = text.length
+    var line = text.slice(start, end).trim()
+    start = end + 1
     if (!line) continue
     try {
       var row = parseRow(JSON.parse(line), source)
@@ -160,18 +197,21 @@ function parseEntries(raw, source) {
 }
 
 // Parse the engine's single archive JSON. It can be a bare array or an object
-// with an `entries` array; both are normalized through parseEntries so the
-// center applies the same sanitizing and numeric stem rules as for stock
-// history files.
-function parseArchive(raw) {
+// with an `entries` array; both are normalized through parseRow so the center
+// applies the same sanitizing and numeric stem rules as for stock history
+// files. JSON.parse materializes the whole document before the entry cap
+// applies; the caller's bounded archive read (16 MiB) is what bounds that
+// allocation, and the entry cap bounds row materialization.
+function parseArchive(raw, maxEntries) {
   var text = String(raw || "").trim()
   if (!text) return []
+  var limit = entryCap(maxEntries, MAX_ARCHIVE_ENTRIES)
   try {
     var parsed = JSON.parse(text)
     var list = Array.isArray(parsed) ? parsed
       : (parsed && Array.isArray(parsed.entries) ? parsed.entries : [])
     var out = []
-    for (var i = 0; i < list.length; i++) {
+    for (var i = 0; i < list.length && out.length < limit; i++) {
       var row = parseRow(list[i], "history")
       if (row) out.push(row)
     }
@@ -184,7 +224,7 @@ function parseArchive(raw) {
 // Merge live popups and archived history, newest first. A file can exist in
 // both locations for an instant while the service archives it; the live
 // copy wins so a dismissal always targets the on-screen toast.
-function mergeEntries(live, history) {
+function mergeEntries(live, history, maxEntries) {
   var byStem = {}
   for (var i = 0; i < history.length; i++) byStem[history[i].stem] = history[i]
   for (var j = 0; j < live.length; j++) byStem[live[j].stem] = live[j]
@@ -192,7 +232,8 @@ function mergeEntries(live, history) {
   var out = []
   for (var k in byStem) out.push(byStem[k])
   out.sort(function(a, b) { return (b.timestamp || 0) - (a.timestamp || 0) })
-  return out
+  var limit = entryCap(maxEntries, MAX_MERGED_ENTRIES)
+  return out.length > limit ? out.slice(0, limit) : out
 }
 
 // Hash only once per parsed row. The store reuses these entries across
@@ -505,14 +546,7 @@ if (typeof module !== "undefined") {
     parseEntries: parseEntries,
     parseArchive: parseArchive,
     clipText: clipText,
-    limits: {
-      app: MAX_APP_LENGTH,
-      glyph: MAX_GLYPH_LENGTH,
-      summary: MAX_SUMMARY_LENGTH,
-      body: MAX_BODY_LENGTH,
-      image: MAX_IMAGE_LENGTH,
-      icon: MAX_ICON_LENGTH,
-    },
+    limits: limits,
     mergeEntries: mergeEntries,
     signature: signature,
     hash: hash,

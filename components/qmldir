@@ -1,4 +1,5 @@
 singleton StoreSingleton 1.0 StoreSingleton.qml
+BoundedProcess 1.0 BoundedProcess.qml
 CompactCard 1.0 CompactCard.qml
 DetailView 1.0 DetailView.qml
 HelpView 1.0 HelpView.qml
